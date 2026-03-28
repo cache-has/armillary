@@ -7,16 +7,19 @@
 //! exposes API routes for pipeline management. Handles single-instance
 //! detection via lockfile and auto-opens the browser.
 
+pub mod dev_proxy;
 pub mod error;
 pub mod lockfile;
 pub mod port;
 pub mod shutdown;
+pub mod static_files;
 
 pub use error::ServerError;
 
 use std::process;
 
 use axum::Router;
+use axum::routing::get;
 use tracing::info;
 
 /// Configuration for the web server.
@@ -28,6 +31,9 @@ pub struct ServerConfig {
     pub port_ceiling: u16,
     /// Whether to auto-open the browser.
     pub open_browser: bool,
+    /// When true, proxy frontend requests to the Vite dev server instead
+    /// of serving embedded static files.
+    pub dev_mode: bool,
 }
 
 impl Default for ServerConfig {
@@ -36,7 +42,24 @@ impl Default for ServerConfig {
             port_start: port::DEFAULT_PORT,
             port_ceiling: port::DEFAULT_PORT_CEILING,
             open_browser: true,
+            dev_mode: false,
         }
+    }
+}
+
+/// Build the Axum router with frontend serving configured.
+fn build_router(config: &ServerConfig) -> Router {
+    // Placeholder: API routes are added in later planning sections.
+    let api_routes = Router::new();
+
+    let app = Router::new().nest("/api", api_routes);
+
+    if config.dev_mode {
+        info!("Dev mode: proxying frontend requests to Vite at {}", dev_proxy::DEFAULT_VITE_ORIGIN);
+        app.fallback(get(dev_proxy::vite_proxy).post(dev_proxy::vite_proxy))
+    } else {
+        app.route("/{*path}", get(static_files::static_handler))
+            .fallback(get(static_files::spa_fallback))
     }
 }
 
@@ -77,8 +100,7 @@ pub async fn serve(config: ServerConfig) -> Result<(), ServerError> {
     let _guard = shutdown::LockfileGuard::new(lock_path);
 
     // --- Build router ---
-    // Placeholder: routes are added in later planning sections.
-    let app = Router::new();
+    let app = build_router(&config);
 
     let url = format!("http://localhost:{port}");
     info!("Horizon Flux listening on {url}");

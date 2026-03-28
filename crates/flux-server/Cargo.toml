@@ -18,6 +18,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 dirs = { workspace = true }
 open = { workspace = true }
+rust-embed = { workspace = true }
+mime_guess = { workspace = true }
+reqwest = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

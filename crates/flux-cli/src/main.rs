@@ -24,6 +24,11 @@ struct Cli {
     /// Do not auto-open the browser.
     #[arg(long)]
     no_browser: bool,
+
+    /// Proxy frontend requests to the Vite dev server instead of serving
+    /// embedded static files.
+    #[arg(long)]
+    dev: bool,
 }
 
 #[derive(Subcommand)]
@@ -50,6 +55,7 @@ fn main() -> Result<()> {
             let config = flux_server::ServerConfig {
                 port_start: cli.port,
                 open_browser: !cli.no_browser,
+                dev_mode: cli.dev,
                 ..Default::default()
             };
 
