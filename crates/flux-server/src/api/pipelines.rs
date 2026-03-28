@@ -1,0 +1,392 @@
+// Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Pipeline management API routes.
+
+use crate::api::{ApiError, PaginatedResponse, Pagination};
+use crate::state::AppState;
+use axum::Json;
+use axum::Router;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::routing::{get, post};
+use flux_datafusion::{ExecutionOptions, PipelineExecutor, PreviewOptions, RunId};
+use flux_engine::pipeline_store::PipelineId;
+use flux_engine::{Pipeline, SampleConfig};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use tracing::error;
+
+/// Build the `/pipelines` sub-router.
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/", get(list_pipelines).post(create_pipeline))
+        .route(
+            "/{id}",
+            get(get_pipeline)
+                .put(update_pipeline)
+                .delete(delete_pipeline),
+        )
+        .route("/{id}/run", post(run_pipeline))
+        .route("/{id}/preview", post(preview_pipeline))
+        .route("/{id}/runs", get(list_runs))
+        .route("/{id}/runs/{run_id}", get(get_run))
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+/// Pipeline response with metadata (returned from CRUD endpoints).
+#[derive(Debug, Serialize)]
+struct PipelineResponse {
+    id: PipelineId,
+    pipeline: Pipeline,
+    created_at: u64,
+    updated_at: u64,
+}
+
+impl From<flux_engine::PipelineRecord> for PipelineResponse {
+    fn from(r: flux_engine::PipelineRecord) -> Self {
+        Self {
+            id: r.id,
+            pipeline: r.pipeline,
+            created_at: system_time_to_ms(r.created_at),
+            updated_at: system_time_to_ms(r.updated_at),
+        }
+    }
+}
+
+/// Request body for triggering a pipeline run.
+#[derive(Debug, Deserialize)]
+struct RunRequest {
+    #[serde(default = "default_environment")]
+    environment: String,
+}
+
+fn default_environment() -> String {
+    "dev".to_string()
+}
+
+/// Request body for pipeline preview.
+#[derive(Debug, Deserialize)]
+struct PreviewRequest {
+    #[serde(default)]
+    sample: Option<SampleConfig>,
+}
+
+/// Serializable preview node result (Arrow schemas/batches → JSON).
+#[derive(Debug, Serialize)]
+struct PreviewNodeResponse {
+    node_id: String,
+    columns: Vec<ColumnInfo>,
+    row_count: u64,
+    duration_ms: u64,
+    rows: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ColumnInfo {
+    name: String,
+    data_type: String,
+}
+
+/// Full preview response.
+#[derive(Debug, Serialize)]
+struct PreviewResponse {
+    pipeline_name: String,
+    execution_order: Vec<String>,
+    nodes: Vec<PreviewNodeResponse>,
+    duration_ms: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+/// `GET /api/pipelines` — list all pipelines with pagination.
+async fn list_pipelines(
+    State(state): State<AppState>,
+    Query(page): Query<Pagination>,
+) -> Result<Json<PaginatedResponse<PipelineResponse>>, (StatusCode, Json<ApiError>)> {
+    let total = state
+        .pipeline_store
+        .count()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let records = state
+        .pipeline_store
+        .list(page.limit, page.offset)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok(Json(PaginatedResponse {
+        data: records.into_iter().map(PipelineResponse::from).collect(),
+        total,
+        limit: page.limit,
+        offset: page.offset,
+    }))
+}
+
+/// `GET /api/pipelines/:id` — get a single pipeline by ID.
+async fn get_pipeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<PipelineResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+    Ok(Json(PipelineResponse::from(record)))
+}
+
+/// `POST /api/pipelines` — create a new pipeline.
+async fn create_pipeline(
+    State(state): State<AppState>,
+    Json(pipeline): Json<Pipeline>,
+) -> Result<(StatusCode, Json<PipelineResponse>), (StatusCode, Json<ApiError>)> {
+    if pipeline.name.trim().is_empty() {
+        return Err(ApiError::bad_request("pipeline name must not be empty"));
+    }
+
+    let record = state.pipeline_store.create(pipeline).map_err(|e| {
+        use flux_engine::PipelineStoreError;
+        match &e {
+            PipelineStoreError::NameConflict(name) => {
+                ApiError::conflict(format!("pipeline `{name}` already exists"))
+            }
+            _ => ApiError::internal(e.to_string()),
+        }
+    })?;
+
+    Ok((StatusCode::CREATED, Json(PipelineResponse::from(record))))
+}
+
+/// `PUT /api/pipelines/:id` — update an existing pipeline.
+async fn update_pipeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(pipeline): Json<Pipeline>,
+) -> Result<Json<PipelineResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+
+    if pipeline.name.trim().is_empty() {
+        return Err(ApiError::bad_request("pipeline name must not be empty"));
+    }
+
+    let record = state
+        .pipeline_store
+        .update(&pipeline_id, pipeline)
+        .map_err(|e| {
+            use flux_engine::PipelineStoreError;
+            match &e {
+                PipelineStoreError::NotFound(_) => ApiError::not_found("pipeline", &id),
+                PipelineStoreError::NameConflict(name) => {
+                    ApiError::conflict(format!("pipeline `{name}` already exists"))
+                }
+                _ => ApiError::internal(e.to_string()),
+            }
+        })?;
+
+    Ok(Json(PipelineResponse::from(record)))
+}
+
+/// `DELETE /api/pipelines/:id` — delete a pipeline.
+async fn delete_pipeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    state.pipeline_store.delete(&pipeline_id).map_err(|e| {
+        use flux_engine::PipelineStoreError;
+        match &e {
+            PipelineStoreError::NotFound(_) => ApiError::not_found("pipeline", &id),
+            _ => ApiError::internal(e.to_string()),
+        }
+    })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /api/pipelines/:id/run` — trigger pipeline execution.
+async fn run_pipeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RunRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let provider_registry = state.connector_registry.to_provider_registry();
+    let options = ExecutionOptions {
+        environment: req.environment,
+        run_store: Some(Arc::clone(&state.run_store)),
+        cancel: Arc::new(AtomicBool::new(false)),
+        environment_resolver: None,
+    };
+
+    let (_result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
+        .await
+        .map_err(|e| {
+            error!(pipeline = %record.pipeline.name, error = %e, "pipeline execution failed");
+            ApiError::internal(e.to_string())
+        })?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::to_value(&run).unwrap()),
+    ))
+}
+
+/// `POST /api/pipelines/:id/preview` — run preview on sample data.
+async fn preview_pipeline(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<PreviewRequest>,
+) -> Result<Json<PreviewResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let provider_registry = state.connector_registry.to_provider_registry();
+    let options = PreviewOptions {
+        sample: req.sample.unwrap_or_default(),
+        cancel: Arc::new(AtomicBool::new(false)),
+    };
+
+    let preview = PipelineExecutor::preview(&record.pipeline, &provider_registry, &options)
+        .await
+        .map_err(|e| {
+            error!(pipeline = %record.pipeline.name, error = %e, "preview failed");
+            ApiError::internal(e.to_string())
+        })?;
+
+    let nodes: Vec<PreviewNodeResponse> = preview
+        .execution_order
+        .iter()
+        .filter_map(|nid| {
+            preview.nodes.get(nid).map(|nr| {
+                let columns: Vec<ColumnInfo> = nr
+                    .schema
+                    .fields()
+                    .iter()
+                    .map(|f| ColumnInfo {
+                        name: f.name().clone(),
+                        data_type: format!("{}", f.data_type()),
+                    })
+                    .collect();
+
+                let rows = batches_to_json_rows(&nr.batches);
+
+                PreviewNodeResponse {
+                    node_id: nid.0.clone(),
+                    columns,
+                    row_count: nr.row_count,
+                    duration_ms: nr.duration.as_millis() as u64,
+                    rows,
+                }
+            })
+        })
+        .collect();
+
+    Ok(Json(PreviewResponse {
+        pipeline_name: preview.pipeline_name,
+        execution_order: preview
+            .execution_order
+            .iter()
+            .map(|n| n.0.clone())
+            .collect(),
+        nodes,
+        duration_ms: preview.duration.as_millis() as u64,
+    }))
+}
+
+/// `GET /api/pipelines/:id/runs` — list execution history for a pipeline.
+async fn list_runs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(page): Query<Pagination>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let runs = state
+        .run_store
+        .list_runs(Some(&record.pipeline.name), page.limit)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok(Json(serde_json::to_value(&runs).unwrap()))
+}
+
+/// `GET /api/pipelines/:id/runs/:run_id` — get detailed run results.
+async fn get_run(
+    State(state): State<AppState>,
+    Path((id, run_id_str)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    // Validate pipeline exists.
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let _record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let run_uuid = uuid::Uuid::parse_str(&run_id_str)
+        .map_err(|_| ApiError::bad_request(format!("invalid run ID: {run_id_str}")))?;
+    let run_id = RunId(run_uuid);
+
+    let run = state
+        .run_store
+        .get_run(&run_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("run", &run_id_str))?;
+
+    Ok(Json(serde_json::to_value(&run).unwrap()))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn parse_pipeline_id(s: &str) -> Result<PipelineId, (StatusCode, Json<ApiError>)> {
+    s.parse::<PipelineId>()
+        .map_err(|_| ApiError::bad_request(format!("invalid pipeline ID: {s}")))
+}
+
+fn system_time_to_ms(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// Convert Arrow RecordBatches to JSON row objects.
+fn batches_to_json_rows(batches: &[arrow::record_batch::RecordBatch]) -> Vec<serde_json::Value> {
+    let mut buf = Vec::new();
+    {
+        let mut writer = arrow::json::LineDelimitedWriter::new(&mut buf);
+        for batch in batches {
+            if let Err(e) = writer.write(batch) {
+                error!("failed to serialize Arrow batch to JSON: {e}");
+                break;
+            }
+        }
+        let _ = writer.finish();
+    }
+
+    let text = String::from_utf8(buf).unwrap_or_default();
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}

@@ -10,10 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 flux-engine = { workspace = true }
+flux-datafusion = { workspace = true }
+flux-connectors = { workspace = true }
 flux-secrets = { workspace = true }
 flux-server = { workspace = true }
 flux-tray = { workspace = true }
 clap = { workspace = true }
+dirs = { workspace = true }
 rpassword = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

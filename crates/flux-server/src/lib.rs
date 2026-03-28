@@ -7,14 +7,17 @@
 //! exposes API routes for pipeline management. Handles single-instance
 //! detection via lockfile and auto-opens the browser.
 
+pub mod api;
 pub mod dev_proxy;
 pub mod error;
 pub mod lockfile;
 pub mod port;
 pub mod shutdown;
+pub mod state;
 pub mod static_files;
 
 pub use error::ServerError;
+pub use state::AppState;
 
 use std::process;
 
@@ -48,14 +51,16 @@ impl Default for ServerConfig {
 }
 
 /// Build the Axum router with frontend serving configured.
-fn build_router(config: &ServerConfig) -> Router {
-    // Placeholder: API routes are added in later planning sections.
-    let api_routes = Router::new();
+fn build_router(config: &ServerConfig, app_state: AppState) -> Router {
+    let api_routes = Router::new().nest("/pipelines", api::pipelines::router());
 
-    let app = Router::new().nest("/api", api_routes);
+    let app = Router::new().nest("/api", api_routes).with_state(app_state);
 
     if config.dev_mode {
-        info!("Dev mode: proxying frontend requests to Vite at {}", dev_proxy::DEFAULT_VITE_ORIGIN);
+        info!(
+            "Dev mode: proxying frontend requests to Vite at {}",
+            dev_proxy::DEFAULT_VITE_ORIGIN
+        );
         app.fallback(get(dev_proxy::vite_proxy).post(dev_proxy::vite_proxy))
     } else {
         app.route("/{*path}", get(static_files::static_handler))
@@ -71,7 +76,7 @@ fn build_router(config: &ServerConfig) -> Router {
 /// 4. Opens the browser
 /// 5. Serves until shutdown signal
 /// 6. Cleans up lockfile via RAII guard
-pub async fn serve(config: ServerConfig) -> Result<(), ServerError> {
+pub async fn serve(config: ServerConfig, app_state: AppState) -> Result<(), ServerError> {
     let lock_path = lockfile::default_path()?;
 
     // --- Instance detection ---
@@ -100,7 +105,7 @@ pub async fn serve(config: ServerConfig) -> Result<(), ServerError> {
     let _guard = shutdown::LockfileGuard::new(lock_path);
 
     // --- Build router ---
-    let app = build_router(&config);
+    let app = build_router(&config, app_state);
 
     let url = format!("http://localhost:{port}");
     info!("Horizon Flux listening on {url}");

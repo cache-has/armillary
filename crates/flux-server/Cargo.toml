@@ -9,6 +9,7 @@ flux-engine = { workspace = true }
 flux-datafusion = { workspace = true }
 flux-connectors = { workspace = true }
 flux-secrets = { workspace = true }
+arrow = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
@@ -16,6 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 dirs = { workspace = true }
 open = { workspace = true }
 rust-embed = { workspace = true }
@@ -26,5 +28,9 @@ reqwest = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+flux-connectors = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }
+serde_json = { workspace = true }

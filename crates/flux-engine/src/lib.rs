@@ -6,6 +6,7 @@ pub mod edge;
 pub mod error;
 pub mod node;
 pub mod pipeline;
+pub mod pipeline_store;
 pub mod sample;
 
 pub fn version() -> &'static str {
@@ -17,6 +18,7 @@ pub use edge::Edge;
 pub use error::{DagError, EngineError};
 pub use node::{Node, NodeId, NodeKind};
 pub use pipeline::Pipeline;
+pub use pipeline_store::{PipelineId, PipelineRecord, PipelineStore, PipelineStoreError};
 pub use sample::SampleConfig;
 
 #[cfg(test)]

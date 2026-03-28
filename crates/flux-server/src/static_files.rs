@@ -42,10 +42,7 @@ pub fn serve_embedded(path: &str) -> Response {
             (
                 [
                     (header::CONTENT_TYPE, mime),
-                    (
-                        header::CACHE_CONTROL,
-                        cache_control.to_string(),
-                    ),
+                    (header::CACHE_CONTROL, cache_control.to_string()),
                 ],
                 file.data,
             )
@@ -56,9 +53,7 @@ pub fn serve_embedded(path: &str) -> Response {
 }
 
 /// Handler for static asset requests (`/{*path}`).
-pub async fn static_handler(
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> Response {
+pub async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
     serve_embedded(&path)
 }
 

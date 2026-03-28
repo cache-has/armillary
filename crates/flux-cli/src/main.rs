@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 mod secret;
@@ -59,8 +60,29 @@ fn main() -> Result<()> {
                 ..Default::default()
             };
 
+            let data_dir = dirs::home_dir()
+                .context("could not determine home directory")?
+                .join(".horizon-flux");
+            std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
+
+            let pipeline_store = Arc::new(
+                flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"))
+                    .context("failed to open pipeline store")?,
+            );
+            let run_store = Arc::new(
+                flux_datafusion::RunStore::open(&data_dir.join("runs.db"))
+                    .context("failed to open run store")?,
+            );
+            let connector_registry = Arc::new(flux_connectors::default_registry());
+
+            let app_state = flux_server::AppState {
+                pipeline_store,
+                run_store,
+                connector_registry,
+            };
+
             let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-            rt.block_on(flux_server::serve(config))
+            rt.block_on(flux_server::serve(config, app_state))
                 .context("server failed")?;
         }
     }
