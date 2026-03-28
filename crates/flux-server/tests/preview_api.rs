@@ -6,7 +6,7 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use flux_datafusion::RunStore;
+use flux_datafusion::{EnvironmentStore, RunStore};
 use flux_engine::PipelineStore;
 use flux_server::AppState;
 use http_body_util::BodyExt;
@@ -19,6 +19,7 @@ fn test_state() -> AppState {
         pipeline_store: Arc::new(PipelineStore::open_in_memory().unwrap()),
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(flux_connectors::default_registry()),
+        environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
     }
 }
 

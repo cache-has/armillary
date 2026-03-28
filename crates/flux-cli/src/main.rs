@@ -74,11 +74,16 @@ fn main() -> Result<()> {
                     .context("failed to open run store")?,
             );
             let connector_registry = Arc::new(flux_connectors::default_registry());
+            let environment_store = Arc::new(
+                flux_datafusion::EnvironmentStore::open(&data_dir.join("environments.db"))
+                    .context("failed to open environment store")?,
+            );
 
             let app_state = flux_server::AppState {
                 pipeline_store,
                 run_store,
                 connector_registry,
+                environment_store,
             };
 
             let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;

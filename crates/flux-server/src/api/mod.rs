@@ -4,6 +4,7 @@
 //! API route modules and shared types.
 
 pub mod connectors;
+pub mod environments;
 pub mod pipelines;
 pub mod preview;
 
