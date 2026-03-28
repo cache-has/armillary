@@ -16,6 +16,14 @@ mod secret;
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+
+    /// Starting port number for the web server.
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+
+    /// Do not auto-open the browser.
+    #[arg(long)]
+    no_browser: bool,
 }
 
 #[derive(Subcommand)]
@@ -39,7 +47,15 @@ fn main() -> Result<()> {
             secret::handle(action).context("secret command failed")?;
         }
         None => {
-            tracing::info!("Horizon Flux v{}", flux_engine::version());
+            let config = flux_server::ServerConfig {
+                port_start: cli.port,
+                open_browser: !cli.no_browser,
+                ..Default::default()
+            };
+
+            let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            rt.block_on(flux_server::serve(config))
+                .context("server failed")?;
         }
     }
 

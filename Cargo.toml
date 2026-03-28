@@ -76,5 +76,14 @@ rpassword = "7"
 # Filesystem
 dirs = "6"
 
+# Browser
+open = "5"
+
+# Platform
+libc = "0.2"
+
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# Testing
+tempfile = "3"
