@@ -129,7 +129,7 @@ function ColumnPanel({
             key={col.name}
             className={cls}
             onClick={() => onColClick(col.name)}
-            ref={(el) => rowRefs.current.set(`${side}:${col.name}`, el)}
+            ref={(el) => { rowRefs.current.set(`${side}:${col.name}`, el); }}
           >
             <span className="join-cfg__col-dot" />
             <span className="join-cfg__col-label">{col.name}</span>

@@ -11,6 +11,7 @@ import {
   type ApiPreviewNodeResponse,
   type ApiNodeRunStats,
 } from '../../api/pipelines';
+import { PreviewTable } from './PreviewTable';
 import './SidePanel.css';
 
 // ---------------------------------------------------------------------------
@@ -38,48 +39,6 @@ function truncateCode(code: string, lines: number): string {
   const split = code.split('\n');
   if (split.length <= lines) return code;
   return split.slice(0, lines).join('\n') + '\n...';
-}
-
-// ---------------------------------------------------------------------------
-// Preview Table sub-component
-// ---------------------------------------------------------------------------
-
-interface PreviewTableProps {
-  preview: ApiPreviewNodeResponse | null;
-  loading: boolean;
-}
-
-function PreviewTable({ preview, loading }: PreviewTableProps) {
-  if (loading) return <span className="side-panel__loading">Loading preview...</span>;
-  if (!preview || preview.rows.length === 0) {
-    return <span className="side-panel__empty">No preview data available</span>;
-  }
-
-  const columns = preview.columns.map((c) => c.name);
-  const rows = preview.rows.slice(0, 10);
-
-  return (
-    <div className="side-panel__table-wrap">
-      <table className="side-panel__table">
-        <thead>
-          <tr>
-            {columns.map((col) => (
-              <th key={col}>{col}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>
-              {columns.map((col) => (
-                <td key={col}>{String(row[col] ?? '')}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +166,7 @@ function SourceContent({ apiNode, preview, previewLoading, runStats }: NodeConte
       </div>
 
       <div className="side-panel__section">
-        <div className="side-panel__section-title">Preview (first 10 rows)</div>
+        <div className="side-panel__section-title">Preview</div>
         <PreviewTable preview={preview} loading={previewLoading} />
       </div>
 
@@ -263,7 +222,7 @@ function TransformContent({
       </div>
 
       <div className="side-panel__section">
-        <div className="side-panel__section-title">Preview (first 10 rows)</div>
+        <div className="side-panel__section-title">Preview</div>
         <PreviewTable preview={preview} loading={previewLoading} />
       </div>
 
@@ -457,7 +416,7 @@ export function SidePanel() {
       try {
         const res = await previewPipeline(
           pipelineId!,
-          { max_rows: 10 },
+          { max_rows: 100 },
           controller.signal,
         );
         if (controller.signal.aborted) return;
