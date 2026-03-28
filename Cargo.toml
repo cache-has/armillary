@@ -1,0 +1,57 @@
+[workspace]
+members = [
+    "crates/flux-engine",
+    "crates/flux-datafusion",
+    "crates/flux-connectors",
+    "crates/flux-secrets",
+    "crates/flux-server",
+    "crates/flux-tray",
+    "crates/flux-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/horizon-analytic/horizon-flux"
+
+[workspace.dependencies]
+# Internal crates
+flux-engine = { path = "crates/flux-engine" }
+flux-datafusion = { path = "crates/flux-datafusion" }
+flux-connectors = { path = "crates/flux-connectors" }
+flux-secrets = { path = "crates/flux-secrets" }
+flux-server = { path = "crates/flux-server" }
+flux-tray = { path = "crates/flux-tray" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+
+# Data processing
+datafusion = "53"
+arrow = "58"
+polars = { version = "0.53", features = ["lazy"] }
+sqlparser = "0.61"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+rusqlite = { version = "0.39", features = ["bundled"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }

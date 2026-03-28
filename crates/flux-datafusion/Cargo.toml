@@ -1,0 +1,15 @@
+[package]
+name = "flux-datafusion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+flux-engine = { workspace = true }
+datafusion = { workspace = true }
+arrow = { workspace = true }
+sqlparser = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
