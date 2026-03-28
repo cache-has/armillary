@@ -151,11 +151,25 @@ pub struct RestApiConfig {
     #[serde(default)]
     pub response_format: ResponseFormat,
     /// JSONPath or field name for extracting the data array from JSON responses.
+    /// Supports dot-notation (e.g. `data.items`) and JSON Pointer (e.g. `/data/items`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_path: Option<String>,
     /// Pagination configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<PaginationConfig>,
+    /// User-defined schema. If omitted, schema is inferred from the first response.
+    /// Map of field name → Arrow-compatible type string (e.g. `{"id": "int64", "name": "utf8"}`).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub schema: HashMap<String, String>,
+    /// Minimum delay between paginated requests in milliseconds (rate limiting).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit_ms: Option<u64>,
+    /// Maximum number of retry attempts for failed requests (default: 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    /// Maximum number of pages to fetch (safety limit for pagination).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_pages: Option<usize>,
 }
 
 fn default_http_method() -> String {
