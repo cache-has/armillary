@@ -1,0 +1,238 @@
+// Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! CLI commands for managing the Horizon Flux server process.
+
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use clap::Subcommand;
+use serde::Serialize;
+
+use crate::OutputFormat;
+
+#[derive(Subcommand)]
+pub enum ServerAction {
+    /// Start the Horizon Flux server (default if no command is given).
+    Start {
+        /// Port number for the web server.
+        #[arg(long, short, default_value_t = 8080)]
+        port: u16,
+
+        /// Start without opening the browser.
+        #[arg(long)]
+        headless: bool,
+
+        /// Proxy frontend requests to the Vite dev server.
+        #[arg(long)]
+        dev: bool,
+    },
+    /// Stop a running server instance.
+    Stop,
+    /// Show server status (running, port, PID).
+    Status,
+}
+
+#[derive(Serialize)]
+struct StatusOutput {
+    running: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+}
+
+pub fn handle(action: ServerAction, format: OutputFormat) -> Result<()> {
+    match action {
+        ServerAction::Start {
+            port,
+            headless,
+            dev,
+        } => start(port, headless, dev),
+        ServerAction::Stop => stop(format),
+        ServerAction::Status => status(format),
+    }
+}
+
+/// Start the server — extracted from the previous default path in main.
+pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
+    let config = flux_server::ServerConfig {
+        port_start: port,
+        open_browser: !headless,
+        dev_mode: dev,
+        ..Default::default()
+    };
+
+    let data_dir = dirs::home_dir()
+        .context("could not determine home directory")?
+        .join(".horizon-flux");
+    std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
+
+    let pipelines_dir = data_dir.join("pipelines");
+    let pipeline_store = Arc::new(
+        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
+            .context("failed to open pipeline store")?,
+    );
+    let run_store = Arc::new(
+        flux_datafusion::RunStore::open(&data_dir.join("runs.db"))
+            .context("failed to open run store")?,
+    );
+    let connector_registry = Arc::new(flux_connectors::default_registry());
+    let environment_store = Arc::new(
+        flux_datafusion::EnvironmentStore::open(&data_dir.join("environments.db"))
+            .context("failed to open environment store")?,
+    );
+
+    let secret_store = match std::env::var("HORIZON_FLUX_SECRET_PASSWORD") {
+        Ok(password) if !password.is_empty() => {
+            let secrets_path = data_dir.join("secrets.db");
+            match flux_secrets::SecretStore::open_or_init(&secrets_path, password.as_bytes()) {
+                Ok(store) => Some(Arc::new(std::sync::Mutex::new(store))),
+                Err(e) => {
+                    tracing::warn!("Could not open secret store: {e}");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    let event_tx = flux_server::AppState::new_event_channel();
+
+    let tray_handle = flux_tray::spawn(
+        flux_tray::TrayConfig {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        event_tx.subscribe(),
+    );
+
+    let app_state = flux_server::AppState {
+        pipeline_store,
+        run_store,
+        connector_registry,
+        environment_store,
+        secret_store,
+        event_tx,
+    };
+
+    let on_ready: Option<Box<dyn FnOnce(u16) + Send>> = match &tray_handle {
+        Some(handle) => {
+            let cmd_tx = handle.cmd_sender();
+            Some(Box::new(move |port| {
+                let url = format!("http://localhost:{port}");
+                let _ = cmd_tx.send(flux_tray::TrayCommand::SetUrl(url));
+            }))
+        }
+        None => None,
+    };
+
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    rt.block_on(flux_server::serve(config, app_state, on_ready))
+        .context("server failed")?;
+
+    if let Some(handle) = tray_handle {
+        handle.shutdown();
+    }
+
+    Ok(())
+}
+
+fn stop(format: OutputFormat) -> Result<()> {
+    let lock_path =
+        flux_server::lockfile::default_path().context("could not determine lockfile path")?;
+
+    let info = flux_server::lockfile::check_existing(&lock_path)
+        .context("failed to read lockfile")?;
+
+    match info {
+        Some(instance) => {
+            send_sigterm(instance.pid)?;
+            // Clean up the lockfile after signaling.
+            flux_server::lockfile::remove(&lock_path);
+            match format {
+                OutputFormat::Human => {
+                    println!(
+                        "Stopped Horizon Flux server (PID {}, port {})",
+                        instance.pid, instance.port
+                    );
+                }
+                OutputFormat::Json => {
+                    let out = serde_json::json!({
+                        "stopped": true,
+                        "pid": instance.pid,
+                        "port": instance.port,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                }
+            }
+        }
+        None => {
+            match format {
+                OutputFormat::Human => {
+                    println!("No running Horizon Flux server found.");
+                }
+                OutputFormat::Json => {
+                    let out = serde_json::json!({ "stopped": false, "reason": "not running" });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn status(format: OutputFormat) -> Result<()> {
+    let lock_path =
+        flux_server::lockfile::default_path().context("could not determine lockfile path")?;
+
+    let info = flux_server::lockfile::check_existing(&lock_path)
+        .context("failed to read lockfile")?;
+
+    let output = match info {
+        Some(instance) => StatusOutput {
+            running: true,
+            pid: Some(instance.pid),
+            port: Some(instance.port),
+        },
+        None => StatusOutput {
+            running: false,
+            pid: None,
+            port: None,
+        },
+    };
+
+    match format {
+        OutputFormat::Human => {
+            if output.running {
+                println!("Horizon Flux is running");
+                println!("  PID:  {}", output.pid.unwrap());
+                println!("  Port: {}", output.port.unwrap());
+            } else {
+                println!("Horizon Flux is not running.");
+            }
+        }
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+    }
+
+    Ok(())
+}
+
+/// Send SIGTERM to a process.
+fn send_sigterm(pid: u32) -> Result<()> {
+    #[cfg(unix)]
+    {
+        // SAFETY: SIGTERM is a standard termination signal.
+        let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            anyhow::bail!("failed to send SIGTERM to PID {pid}: {err}");
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        anyhow::bail!("stopping the server is only supported on Unix systems");
+    }
+}
