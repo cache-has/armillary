@@ -3,7 +3,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ApiPreviewNodeResponse, ApiColumnInfo } from '../../api/pipelines';
+import type { ApiPreviewNodeResponse, ApiColumnInfo, ApiColumnStats } from '../../api/pipelines';
 import './PreviewTable.css';
 
 // ---------------------------------------------------------------------------
@@ -122,9 +122,36 @@ const ROW_HEIGHT = 28;
 export interface PreviewTableProps {
   preview: ApiPreviewNodeResponse | null;
   loading: boolean;
+  sampleMethod?: string;
 }
 
-export function PreviewTable({ preview, loading }: PreviewTableProps) {
+/** Format a column stats object as a tooltip string. */
+export function formatColumnStatsTooltip(stats: ApiColumnStats): string {
+  switch (stats.kind) {
+    case 'numeric': {
+      const parts: string[] = [];
+      if (stats.min !== null) parts.push(`Min: ${stats.min.toLocaleString()}`);
+      if (stats.max !== null) parts.push(`Max: ${stats.max.toLocaleString()}`);
+      if (stats.mean !== null) parts.push(`Mean: ${stats.mean.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+      parts.push(`Nulls: ${stats.null_count}`);
+      return parts.join('\n');
+    }
+    case 'string': {
+      const parts: string[] = [];
+      if (stats.min_length !== null) parts.push(`Min length: ${stats.min_length}`);
+      if (stats.max_length !== null) parts.push(`Max length: ${stats.max_length}`);
+      parts.push(`Unique: ${stats.unique_count}`);
+      parts.push(`Nulls: ${stats.null_count}`);
+      return parts.join('\n');
+    }
+    case 'boolean':
+      return `True: ${stats.true_count}\nFalse: ${stats.false_count}\nNulls: ${stats.null_count}`;
+    case 'other':
+      return `Nulls: ${stats.null_count}`;
+  }
+}
+
+export function PreviewTable({ preview, loading, sampleMethod }: PreviewTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
@@ -253,6 +280,8 @@ export function PreviewTable({ preview, loading }: PreviewTableProps) {
             {columns.map((col, ci) => {
               const w = colWidths[col.name] ?? DEFAULT_COL_WIDTH;
               const isSorted = sort?.column === col.name;
+              const colStats = preview?.column_stats?.[ci];
+              const statsTooltip = colStats ? '\n' + formatColumnStatsTooltip(colStats) : '';
               return (
                 <div
                   key={col.name}
@@ -260,7 +289,7 @@ export function PreviewTable({ preview, loading }: PreviewTableProps) {
                   style={{ width: w, minWidth: w }}
                   onClick={() => handleSort(col.name)}
                   role="columnheader"
-                  title={`${col.name} (${col.data_type}) — click to sort`}
+                  title={`${col.name} (${col.data_type})${statsTooltip}\n— click to sort`}
                 >
                   <span className="preview-table__col-name">{col.name}</span>
                   <span className={`preview-table__type-badge preview-table__type-badge--${columnKinds[ci]}`}>
@@ -348,6 +377,14 @@ export function PreviewTable({ preview, loading }: PreviewTableProps) {
       <div className="preview-table__stats" data-testid="preview-table-stats">
         {preview.row_count.toLocaleString()} rows &middot; {columns.length} columns
         &middot; {preview.duration_ms}ms
+        {sampleMethod && (
+          <>
+            {' '}&middot;{' '}
+            <span className="preview-table__sample-method" data-testid="sample-method">
+              {sampleMethod}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

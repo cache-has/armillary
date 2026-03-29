@@ -8,6 +8,7 @@
 
 use crate::api::ApiError;
 use crate::api::pipelines::{ColumnInfo, PreviewNodeResponse, batches_to_json_rows};
+use flux_datafusion::compute_column_stats;
 use crate::state::AppState;
 use arrow::json::ReaderBuilder;
 use arrow::record_batch::RecordBatch;
@@ -178,6 +179,7 @@ fn build_preview_response(
         .unwrap_or_default();
 
     let rows = batches_to_json_rows(batches);
+    let column_stats = compute_column_stats(batches);
 
     Ok(Json(PreviewNodeResponse {
         node_id: node_id.to_string(),
@@ -185,6 +187,7 @@ fn build_preview_response(
         row_count,
         duration_ms: start.elapsed().as_millis() as u64,
         rows,
+        column_stats,
     }))
 }
 

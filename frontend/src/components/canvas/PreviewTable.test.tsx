@@ -3,8 +3,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { PreviewTable, classifyType, formatCell } from './PreviewTable';
-import type { ApiPreviewNodeResponse } from '../../api/pipelines';
+import { PreviewTable, classifyType, formatCell, formatColumnStatsTooltip } from './PreviewTable';
+import type { ApiPreviewNodeResponse, ApiColumnStats } from '../../api/pipelines';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -112,6 +112,36 @@ describe('PreviewTable', () => {
     expect(screen.getByTestId('resize-handle-id')).toBeInTheDocument();
     expect(screen.getByTestId('resize-handle-name')).toBeInTheDocument();
   });
+
+  it('shows sample method in stats bar when provided', () => {
+    render(<PreviewTable preview={samplePreview} loading={false} sampleMethod="first 100" />);
+    const stats = screen.getByTestId('preview-table-stats');
+    expect(stats.textContent).toContain('first 100');
+    expect(screen.getByTestId('sample-method')).toHaveTextContent('first 100');
+  });
+
+  it('does not show sample method when not provided', () => {
+    render(<PreviewTable preview={samplePreview} loading={false} />);
+    expect(screen.queryByTestId('sample-method')).toBeNull();
+  });
+
+  it('includes column stats in header title tooltip', () => {
+    const previewWithStats: ApiPreviewNodeResponse = {
+      ...samplePreview,
+      column_stats: [
+        { kind: 'numeric', min: 1, max: 3, mean: 2, null_count: 0 },
+        { kind: 'string', min_length: 3, max_length: 5, unique_count: 2, null_count: 1 },
+        { kind: 'numeric', min: 72.123, max: 95.5, mean: 83.81, null_count: 1 },
+        { kind: 'boolean', true_count: 2, false_count: 1, null_count: 0 },
+        { kind: 'other', null_count: 1 },
+      ],
+    };
+    render(<PreviewTable preview={previewWithStats} loading={false} />);
+    const idHeader = screen.getByText('id').closest('.preview-table__th')!;
+    expect(idHeader.getAttribute('title')).toContain('Min:');
+    expect(idHeader.getAttribute('title')).toContain('Max:');
+    expect(idHeader.getAttribute('title')).toContain('Mean:');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -175,5 +205,45 @@ describe('formatCell', () => {
 
   it('passes through temporal string values', () => {
     expect(formatCell('2026-01-15', 'temporal')).toEqual({ text: '2026-01-15', isNull: false });
+  });
+});
+
+describe('formatColumnStatsTooltip', () => {
+  it('formats numeric stats', () => {
+    const stats: ApiColumnStats = { kind: 'numeric', min: 1, max: 100, mean: 50.5, null_count: 3 };
+    const tooltip = formatColumnStatsTooltip(stats);
+    expect(tooltip).toContain('Min:');
+    expect(tooltip).toContain('Max:');
+    expect(tooltip).toContain('Mean:');
+    expect(tooltip).toContain('Nulls: 3');
+  });
+
+  it('formats string stats', () => {
+    const stats: ApiColumnStats = { kind: 'string', min_length: 2, max_length: 10, unique_count: 5, null_count: 1 };
+    const tooltip = formatColumnStatsTooltip(stats);
+    expect(tooltip).toContain('Min length: 2');
+    expect(tooltip).toContain('Max length: 10');
+    expect(tooltip).toContain('Unique: 5');
+    expect(tooltip).toContain('Nulls: 1');
+  });
+
+  it('formats boolean stats', () => {
+    const stats: ApiColumnStats = { kind: 'boolean', true_count: 8, false_count: 2, null_count: 0 };
+    const tooltip = formatColumnStatsTooltip(stats);
+    expect(tooltip).toContain('True: 8');
+    expect(tooltip).toContain('False: 2');
+    expect(tooltip).toContain('Nulls: 0');
+  });
+
+  it('formats other stats', () => {
+    const stats: ApiColumnStats = { kind: 'other', null_count: 7 };
+    expect(formatColumnStatsTooltip(stats)).toBe('Nulls: 7');
+  });
+
+  it('handles null numeric values', () => {
+    const stats: ApiColumnStats = { kind: 'numeric', min: null, max: null, mean: null, null_count: 10 };
+    const tooltip = formatColumnStatsTooltip(stats);
+    expect(tooltip).not.toContain('Min:');
+    expect(tooltip).toContain('Nulls: 10');
   });
 });

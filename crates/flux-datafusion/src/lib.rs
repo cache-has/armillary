@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+pub mod column_stats;
 pub mod environment;
 pub mod error;
 pub mod executor;
@@ -27,6 +28,7 @@ pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
 pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
 pub use run_store::RunStore;
+pub use column_stats::{ColumnStats, compute_column_stats};
 pub use stats::NodeStats;
 
 pub fn version() -> &'static str {

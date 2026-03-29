@@ -118,6 +118,13 @@ export interface ApiColumnInfo {
   nullable: boolean;
 }
 
+/** Per-column statistics (tagged union via `kind` field). */
+export type ApiColumnStats =
+  | { kind: 'numeric'; min: number | null; max: number | null; mean: number | null; null_count: number }
+  | { kind: 'string'; min_length: number | null; max_length: number | null; unique_count: number; null_count: number }
+  | { kind: 'boolean'; true_count: number; false_count: number; null_count: number }
+  | { kind: 'other'; null_count: number };
+
 /** Single node result from a preview run. */
 export interface ApiPreviewNodeResponse {
   node_id: string;
@@ -125,6 +132,7 @@ export interface ApiPreviewNodeResponse {
   row_count: number;
   duration_ms: number;
   rows: Record<string, unknown>[];
+  column_stats?: ApiColumnStats[];
 }
 
 /** Full pipeline preview response. */
@@ -133,6 +141,7 @@ export interface ApiPreviewResponse {
   execution_order: string[];
   nodes: ApiPreviewNodeResponse[];
   duration_ms: number;
+  sample_method?: string;
 }
 
 /** Node-level run statistics. */

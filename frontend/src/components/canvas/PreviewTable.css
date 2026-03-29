@@ -218,6 +218,10 @@
   margin-top: 4px;
 }
 
+.preview-table__sample-method {
+  font-style: italic;
+}
+
 /* ---- Loading skeleton ---- */
 
 .preview-table--loading {

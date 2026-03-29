@@ -165,11 +165,12 @@ interface NodeContentProps {
   apiNode: ApiNode | undefined;
   preview: ApiPreviewNodeResponse | null;
   previewLoading: boolean;
+  sampleMethod?: string;
   runStats: ApiNodeRunStats | null;
   upstreamNames: string[];
 }
 
-function SourceContent({ apiNode, preview, previewLoading, runStats }: NodeContentProps) {
+function SourceContent({ apiNode, preview, previewLoading, sampleMethod, runStats }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -209,7 +210,7 @@ function SourceContent({ apiNode, preview, previewLoading, runStats }: NodeConte
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Preview</div>
-        <PreviewTable preview={preview} loading={previewLoading} />
+        <PreviewTable preview={preview} loading={previewLoading} sampleMethod={sampleMethod} />
       </div>
 
       <div className="side-panel__section">
@@ -228,6 +229,7 @@ function TransformContent({
   apiNode,
   preview,
   previewLoading,
+  sampleMethod,
   runStats,
   upstreamNames,
 }: NodeContentProps) {
@@ -265,7 +267,7 @@ function TransformContent({
 
       <div className="side-panel__section">
         <div className="side-panel__section-title">Preview</div>
-        <PreviewTable preview={preview} loading={previewLoading} />
+        <PreviewTable preview={preview} loading={previewLoading} sampleMethod={sampleMethod} />
       </div>
 
       <div className="side-panel__section">
@@ -409,6 +411,7 @@ export function SidePanel() {
 
   const [preview, setPreview] = useState<Map<string, ApiPreviewNodeResponse>>(new Map());
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [sampleMethod, setSampleMethod] = useState<string | undefined>(undefined);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
 
   // Cache key: pipeline version — invalidate when pipeline config changes
@@ -468,6 +471,7 @@ export function SidePanel() {
         }
         previewCacheRef.current = { version: pipelineVersion, data: map };
         setPreview(map);
+        setSampleMethod(res.sample_method);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         // Preview not available (backend may not be running)
@@ -543,6 +547,7 @@ export function SidePanel() {
         apiNode,
         preview: preview.get(selectedNodeId!) ?? null,
         previewLoading,
+        sampleMethod,
         runStats: runStats.get(selectedNodeId!) ?? null,
         upstreamNames,
       }

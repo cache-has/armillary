@@ -10,7 +10,9 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
-use flux_datafusion::{ExecutionOptions, PipelineExecutor, PreviewOptions, RunId};
+use flux_datafusion::{
+    ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, compute_column_stats,
+};
 use flux_engine::pipeline_store::PipelineId;
 use flux_engine::{Pipeline, SampleConfig};
 use serde::{Deserialize, Serialize};
@@ -85,6 +87,7 @@ pub struct PreviewNodeResponse {
     pub row_count: u64,
     pub duration_ms: u64,
     pub rows: Vec<serde_json::Value>,
+    pub column_stats: Vec<ColumnStats>,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,6 +104,7 @@ struct PreviewResponse {
     execution_order: Vec<String>,
     nodes: Vec<PreviewNodeResponse>,
     duration_ms: u64,
+    sample_method: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +287,8 @@ async fn preview_pipeline(
             ApiError::internal(e.to_string())
         })?;
 
+    let sample_method = format_sample_method(&preview.sample_config);
+
     let nodes: Vec<PreviewNodeResponse> = preview
         .execution_order
         .iter()
@@ -300,6 +306,7 @@ async fn preview_pipeline(
                     .collect();
 
                 let rows = batches_to_json_rows(&nr.batches);
+                let column_stats = compute_column_stats(&nr.batches);
 
                 PreviewNodeResponse {
                     node_id: nid.0.clone(),
@@ -307,6 +314,7 @@ async fn preview_pipeline(
                     row_count: nr.row_count,
                     duration_ms: nr.duration.as_millis() as u64,
                     rows,
+                    column_stats,
                 }
             })
         })
@@ -321,6 +329,7 @@ async fn preview_pipeline(
             .collect(),
         nodes,
         duration_ms: preview.duration.as_millis() as u64,
+        sample_method,
     }))
 }
 
@@ -374,6 +383,14 @@ async fn get_run(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn format_sample_method(config: &SampleConfig) -> String {
+    match config {
+        SampleConfig::FirstN { count } => format!("first {count}"),
+        SampleConfig::Random { count, .. } => format!("random {count}"),
+        SampleConfig::Full => "full".to_string(),
+    }
+}
 
 fn parse_pipeline_id(s: &str) -> Result<PipelineId, (StatusCode, Json<ApiError>)> {
     s.parse::<PipelineId>()
