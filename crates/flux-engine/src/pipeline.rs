@@ -5,7 +5,7 @@ use crate::edge::Edge;
 use crate::node::{Node, NodeId};
 use crate::sample::SampleConfig;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// A complete pipeline definition: a DAG of source, transform, and sink nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,11 +16,11 @@ pub struct Pipeline {
     #[serde(default = "default_environment")]
     pub default_environment: String,
     #[serde(default)]
-    pub variables: HashMap<String, Variable>,
+    pub variables: BTreeMap<String, Variable>,
     /// Per-environment, per-node config overrides.
     /// Outer key = environment name, inner key = node id, value = override config.
     #[serde(default)]
-    pub environment_overrides: HashMap<String, HashMap<String, serde_json::Value>>,
+    pub environment_overrides: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
     /// Default sample configuration for preview execution.
     /// When `None`, previews use `SampleConfig::default()` (first 100 rows).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,6 +38,23 @@ fn default_environment() -> String {
 }
 
 impl Pipeline {
+    /// Serialize to deterministic, pretty-printed JSON with sorted keys.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize from JSON with schema validation.
+    ///
+    /// Parses the JSON string into a `Pipeline` and runs import validation
+    /// (name, node IDs, variable defaults, environment override references,
+    /// and DAG structure). Returns descriptive errors on failure.
+    pub fn from_json(json: &str) -> Result<Self, crate::error::ImportError> {
+        let pipeline: Pipeline =
+            serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
+        crate::validate::validate_import(&pipeline)?;
+        Ok(pipeline)
+    }
+
     /// Look up a node by its ID.
     pub fn node(&self, id: &NodeId) -> Option<&Node> {
         self.nodes.iter().find(|n| n.id == *id)

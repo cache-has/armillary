@@ -8,6 +8,7 @@ pub mod node;
 pub mod pipeline;
 pub mod pipeline_store;
 pub mod sample;
+pub mod validate;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -15,7 +16,7 @@ pub fn version() -> &'static str {
 
 // Re-export primary types at crate root for ergonomic imports.
 pub use edge::Edge;
-pub use error::{DagError, EngineError};
+pub use error::{DagError, EngineError, ImportError, ValidationError};
 pub use node::{Node, NodeId, NodeKind};
 pub use pipeline::Pipeline;
 pub use pipeline_store::{PipelineId, PipelineRecord, PipelineStore, PipelineStoreError};

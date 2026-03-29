@@ -4,7 +4,7 @@
 use crate::node::NodeId;
 
 /// Errors that can occur during DAG construction and validation.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum DagError {
     #[error("cycle detected involving node `{0}`")]
     CycleDetected(NodeId),
@@ -48,4 +48,54 @@ pub enum EngineError {
 
     #[error("{0}")]
     Other(String),
+}
+
+/// Error returned when importing a pipeline from JSON.
+#[derive(Debug, thiserror::Error)]
+pub enum ImportError {
+    #[error("invalid JSON: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("pipeline validation failed:\n{}", format_validation_errors(.0))]
+    Validation(Vec<ValidationError>),
+}
+
+/// A single validation error found during pipeline import.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ValidationError {
+    #[error("pipeline name must not be empty")]
+    EmptyName,
+
+    #[error("node at index {index} has an empty id")]
+    EmptyNodeId { index: usize },
+
+    #[error("node at index {index} has an empty name")]
+    EmptyNodeName { index: usize },
+
+    #[error("variable `{name}`: default value `{value}` is not compatible with type `{expected}`")]
+    VariableDefaultTypeMismatch {
+        name: String,
+        expected: String,
+        value: String,
+    },
+
+    #[error(
+        "environment override `{environment}` references unknown node `{node_id}`"
+    )]
+    OverrideUnknownNode {
+        environment: String,
+        node_id: String,
+    },
+
+    #[error(transparent)]
+    Dag(#[from] DagError),
+}
+
+fn format_validation_errors(errors: &[ValidationError]) -> String {
+    errors
+        .iter()
+        .enumerate()
+        .map(|(i, e)| format!("  {}. {e}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

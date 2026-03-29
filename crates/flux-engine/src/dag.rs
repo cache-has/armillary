@@ -206,7 +206,7 @@ mod tests {
     use crate::edge::Edge;
     use crate::node::*;
     use crate::pipeline::Variable;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     fn source_node(id: &str) -> Node {
         Node {
@@ -253,8 +253,8 @@ mod tests {
             name: "test".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![
                 source_node("src"),
@@ -285,8 +285,8 @@ mod tests {
             name: "multi_input".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![
                 source_node("src_a"),
@@ -315,8 +315,8 @@ mod tests {
             name: "cyclic".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![
                 source_node("a"),
@@ -341,8 +341,8 @@ mod tests {
             name: "orphan".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![
                 source_node("src"),
@@ -362,8 +362,8 @@ mod tests {
             name: "bad_source".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![source_node("a"), source_node("b"), sink_node("out")],
             edges: vec![
@@ -384,8 +384,8 @@ mod tests {
             name: "empty".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![],
             edges: vec![],
@@ -400,8 +400,8 @@ mod tests {
             name: "dup".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![source_node("a"), source_node("a"), sink_node("out")],
             edges: vec![Edge::new("a", "out")],
@@ -419,8 +419,8 @@ mod tests {
             name: "unknown".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![
@@ -439,8 +439,8 @@ mod tests {
             name: "diamond".into(),
             version: 1,
             default_environment: "dev".into(),
-            variables: HashMap::new(),
-            environment_overrides: HashMap::new(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
             sample_config: None,
             nodes: vec![
                 source_node("src"),

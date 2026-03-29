@@ -17,7 +17,7 @@ use flux_datafusion::{ExecutionOptions, PipelineExecutor, RunStatus, RunStore};
 use flux_engine::edge::Edge;
 use flux_engine::node::*;
 use flux_engine::pipeline::Pipeline;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -194,8 +194,8 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
         name: name.to_string(),
         version: 1,
         default_environment: "dev".to_string(),
-        variables: HashMap::new(),
-        environment_overrides: HashMap::new(),
+        variables: BTreeMap::new(),
+        environment_overrides: BTreeMap::new(),
         sample_config: None,
         nodes,
         edges,
