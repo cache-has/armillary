@@ -48,6 +48,8 @@ struct PipelineResponse {
     pipeline: Pipeline,
     created_at: u64,
     updated_at: u64,
+    last_run_at: Option<u64>,
+    run_count: u32,
 }
 
 impl From<flux_engine::PipelineRecord> for PipelineResponse {
@@ -57,6 +59,8 @@ impl From<flux_engine::PipelineRecord> for PipelineResponse {
             pipeline: r.pipeline,
             created_at: system_time_to_ms(r.created_at),
             updated_at: system_time_to_ms(r.updated_at),
+            last_run_at: r.last_run_at.map(system_time_to_ms),
+            run_count: r.run_count,
         }
     }
 }
@@ -253,6 +257,11 @@ async fn run_pipeline(
             error!(pipeline = %record.pipeline.name, error = %e, "pipeline execution failed");
             ApiError::internal(e.to_string())
         })?;
+
+    // Update run metadata (last_run_at, run_count) — best-effort.
+    if let Err(e) = state.pipeline_store.record_run(&pipeline_id) {
+        error!(pipeline = %record.pipeline.name, error = %e, "failed to record run metadata");
+    }
 
     Ok((
         StatusCode::ACCEPTED,

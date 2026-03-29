@@ -1,12 +1,16 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! SQLite-backed storage for pipeline definitions.
+//! Hybrid SQLite + filesystem storage for pipeline definitions.
+//!
+//! Pipeline metadata (ID, name, timestamps, run stats) lives in SQLite.
+//! Pipeline definition JSON lives on the filesystem as `{id}.json` files
+//! inside a configurable pipelines directory.
 
 use crate::pipeline::Pipeline;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -49,6 +53,8 @@ pub struct PipelineRecord {
     pub pipeline: Pipeline,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
+    pub last_run_at: Option<SystemTime>,
+    pub run_count: u32,
 }
 
 /// Errors from pipeline storage operations.
@@ -60,6 +66,9 @@ pub enum PipelineStoreError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("filesystem error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("pipeline not found: {0}")]
     NotFound(String),
 
@@ -70,30 +79,46 @@ pub enum PipelineStoreError {
     InvalidId(String),
 }
 
-/// Persists pipeline definitions in embedded SQLite.
+/// Persists pipeline definitions using SQLite (metadata) and the filesystem
+/// (JSON definition files in a configurable directory).
 pub struct PipelineStore {
     conn: Mutex<Connection>,
+    pipelines_dir: PathBuf,
 }
 
 impl PipelineStore {
-    /// Open (or create) a pipeline store at the given file path.
-    pub fn open(path: &Path) -> Result<Self, PipelineStoreError> {
-        let conn = Connection::open(path)?;
+    /// Open (or create) a pipeline store.
+    ///
+    /// `db_path` — SQLite database file for metadata.
+    /// `pipelines_dir` — directory where `{pipeline_id}.json` files are written.
+    pub fn open(db_path: &Path, pipelines_dir: &Path) -> Result<Self, PipelineStoreError> {
+        std::fs::create_dir_all(pipelines_dir)?;
+        let conn = Connection::open(db_path)?;
         let store = Self {
             conn: Mutex::new(conn),
+            pipelines_dir: pipelines_dir.to_path_buf(),
         };
         store.init_schema()?;
         Ok(store)
     }
 
-    /// Open an in-memory pipeline store (useful for tests).
-    pub fn open_in_memory() -> Result<Self, PipelineStoreError> {
+    /// Open an in-memory pipeline store backed by a temporary directory.
+    /// Useful for tests — caller must keep the `pipelines_dir` alive for the
+    /// duration of the test.
+    pub fn open_in_memory(pipelines_dir: &Path) -> Result<Self, PipelineStoreError> {
+        std::fs::create_dir_all(pipelines_dir)?;
         let conn = Connection::open_in_memory()?;
         let store = Self {
             conn: Mutex::new(conn),
+            pipelines_dir: pipelines_dir.to_path_buf(),
         };
         store.init_schema()?;
         Ok(store)
+    }
+
+    /// Return the directory where pipeline JSON files are stored.
+    pub fn pipelines_dir(&self) -> &Path {
+        &self.pipelines_dir
     }
 
     fn init_schema(&self) -> Result<(), PipelineStoreError> {
@@ -102,9 +127,10 @@ impl PipelineStore {
             "CREATE TABLE IF NOT EXISTS pipelines (
                 id          TEXT PRIMARY KEY,
                 name        TEXT NOT NULL UNIQUE,
-                definition  TEXT NOT NULL,
                 created_at  INTEGER NOT NULL,
-                updated_at  INTEGER NOT NULL
+                updated_at  INTEGER NOT NULL,
+                last_run_at INTEGER,
+                run_count   INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_pipelines_name
@@ -128,38 +154,54 @@ impl PipelineStore {
         }
 
         let now = SystemTime::now();
-        let record = PipelineRecord {
-            id: PipelineId::new(),
+        let id = PipelineId::new();
+
+        // Write definition JSON to filesystem.
+        let json = serde_json::to_string_pretty(&pipeline)?;
+        std::fs::write(self.json_path(&id), &json)?;
+
+        conn.execute(
+            "INSERT INTO pipelines (id, name, created_at, updated_at, run_count)
+             VALUES (?1, ?2, ?3, ?4, 0)",
+            params![
+                id.0.to_string(),
+                pipeline.name,
+                system_time_to_ms(now),
+                system_time_to_ms(now),
+            ],
+        )?;
+
+        Ok(PipelineRecord {
+            id,
             pipeline,
             created_at: now,
             updated_at: now,
-        };
-
-        let json = serde_json::to_string(&record.pipeline)?;
-        conn.execute(
-            "INSERT INTO pipelines (id, name, definition, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                record.id.0.to_string(),
-                record.pipeline.name,
-                json,
-                system_time_to_ms(record.created_at),
-                system_time_to_ms(record.updated_at),
-            ],
-        )?;
-        Ok(record)
+            last_run_at: None,
+            run_count: 0,
+        })
     }
 
     /// Get a pipeline by ID.
     pub fn get(&self, id: &PipelineId) -> Result<Option<PipelineRecord>, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, definition, created_at, updated_at
+            "SELECT id, name, created_at, updated_at, last_run_at, run_count
              FROM pipelines WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id.0.to_string()])?;
         match rows.next()? {
-            Some(row) => Ok(Some(row_to_record(row)?)),
+            Some(row) => {
+                let meta = row_to_metadata(row)?;
+                let pipeline = self.read_definition(&meta.id)?;
+                Ok(Some(PipelineRecord {
+                    id: meta.id,
+                    pipeline,
+                    created_at: meta.created_at,
+                    updated_at: meta.updated_at,
+                    last_run_at: meta.last_run_at,
+                    run_count: meta.run_count,
+                }))
+            }
             None => Ok(None),
         }
     }
@@ -168,15 +210,31 @@ impl PipelineStore {
     pub fn list(&self, limit: u32, offset: u32) -> Result<Vec<PipelineRecord>, PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, definition, created_at, updated_at
+            "SELECT id, name, created_at, updated_at, last_run_at, run_count
              FROM pipelines
              ORDER BY name ASC
              LIMIT ?1 OFFSET ?2",
         )?;
         let mut rows = stmt.query(params![limit, offset])?;
-        let mut records = Vec::new();
+        let mut metas = Vec::new();
         while let Some(row) = rows.next()? {
-            records.push(row_to_record(row)?);
+            metas.push(row_to_metadata(row)?);
+        }
+        drop(rows);
+        drop(stmt);
+        drop(conn);
+
+        let mut records = Vec::with_capacity(metas.len());
+        for meta in metas {
+            let pipeline = self.read_definition(&meta.id)?;
+            records.push(PipelineRecord {
+                id: meta.id,
+                pipeline,
+                created_at: meta.created_at,
+                updated_at: meta.updated_at,
+                last_run_at: meta.last_run_at,
+                run_count: meta.run_count,
+            });
         }
         Ok(records)
     }
@@ -209,27 +267,26 @@ impl PipelineStore {
         }
 
         let now = SystemTime::now();
-        let json = serde_json::to_string(&pipeline)?;
+
+        // Write updated definition to filesystem.
+        let json = serde_json::to_string_pretty(&pipeline)?;
+        std::fs::write(self.json_path(id), &json)?;
+
         let rows = conn.execute(
-            "UPDATE pipelines SET name = ?1, definition = ?2, updated_at = ?3 WHERE id = ?4",
-            params![
-                pipeline.name,
-                json,
-                system_time_to_ms(now),
-                id.0.to_string(),
-            ],
+            "UPDATE pipelines SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            params![pipeline.name, system_time_to_ms(now), id.0.to_string()],
         )?;
         if rows == 0 {
             return Err(PipelineStoreError::NotFound(id.to_string()));
         }
 
-        // Re-read to get created_at.
+        // Re-read to get full metadata.
         drop(conn);
         self.get(id)?
             .ok_or_else(|| PipelineStoreError::NotFound(id.to_string()))
     }
 
-    /// Delete a pipeline by ID.
+    /// Delete a pipeline by ID. Removes both the metadata row and the JSON file.
     pub fn delete(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute(
@@ -239,23 +296,77 @@ impl PipelineStore {
         if rows == 0 {
             return Err(PipelineStoreError::NotFound(id.to_string()));
         }
+        drop(conn);
+
+        // Remove the JSON file (ignore error if already missing).
+        let path = self.json_path(id);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
         Ok(())
+    }
+
+    /// Record that a pipeline was executed. Updates `last_run_at` to now and
+    /// increments `run_count`.
+    pub fn record_run(&self, id: &PipelineId) -> Result<(), PipelineStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let now = system_time_to_ms(SystemTime::now());
+        let rows = conn.execute(
+            "UPDATE pipelines SET last_run_at = ?1, run_count = run_count + 1 WHERE id = ?2",
+            params![now, id.0.to_string()],
+        )?;
+        if rows == 0 {
+            return Err(PipelineStoreError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Filesystem path for a pipeline's JSON definition file.
+    fn json_path(&self, id: &PipelineId) -> PathBuf {
+        self.pipelines_dir.join(format!("{}.json", id.0))
+    }
+
+    /// Read a pipeline definition from its JSON file on disk.
+    fn read_definition(&self, id: &PipelineId) -> Result<Pipeline, PipelineStoreError> {
+        let path = self.json_path(id);
+        let json = std::fs::read_to_string(&path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                PipelineStoreError::NotFound(format!(
+                    "definition file missing for pipeline {id}"
+                ))
+            } else {
+                PipelineStoreError::Io(e)
+            }
+        })?;
+        let pipeline: Pipeline = serde_json::from_str(&json)?;
+        Ok(pipeline)
     }
 }
 
-fn row_to_record(row: &rusqlite::Row<'_>) -> Result<PipelineRecord, PipelineStoreError> {
+/// Intermediate metadata from a SQLite row (before reading the JSON file).
+struct PipelineMetadata {
+    id: PipelineId,
+    created_at: SystemTime,
+    updated_at: SystemTime,
+    last_run_at: Option<SystemTime>,
+    run_count: u32,
+}
+
+fn row_to_metadata(row: &rusqlite::Row<'_>) -> Result<PipelineMetadata, PipelineStoreError> {
     let id_str: String = row.get(0)?;
-    let definition_json: String = row.get(2)?;
-    let created_ms: i64 = row.get(3)?;
-    let updated_ms: i64 = row.get(4)?;
+    let created_ms: i64 = row.get(2)?;
+    let updated_ms: i64 = row.get(3)?;
+    let last_run_ms: Option<i64> = row.get(4)?;
+    let run_count: u32 = row.get(5)?;
 
     let id = Uuid::parse_str(&id_str).map_err(|e| PipelineStoreError::InvalidId(format!("{e}")))?;
 
-    Ok(PipelineRecord {
+    Ok(PipelineMetadata {
         id: PipelineId(id),
-        pipeline: serde_json::from_str(&definition_json)?,
         created_at: ms_to_system_time(created_ms),
         updated_at: ms_to_system_time(updated_ms),
+        last_run_at: last_run_ms.map(ms_to_system_time),
+        run_count,
     })
 }
 
@@ -302,18 +413,26 @@ mod tests {
 
     #[test]
     fn create_and_get() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("test")).unwrap();
         assert_eq!(record.pipeline.name, "test");
+        assert_eq!(record.run_count, 0);
+        assert!(record.last_run_at.is_none());
 
         let fetched = store.get(&record.id).unwrap().unwrap();
         assert_eq!(fetched.id, record.id);
         assert_eq!(fetched.pipeline.name, "test");
+
+        // Verify JSON file exists on disk.
+        let json_path = tmp.path().join(format!("{}.json", record.id.0));
+        assert!(json_path.exists());
     }
 
     #[test]
     fn name_conflict() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         store.create(test_pipeline("dup")).unwrap();
         let err = store.create(test_pipeline("dup")).unwrap_err();
         assert!(matches!(err, PipelineStoreError::NameConflict(_)));
@@ -321,7 +440,8 @@ mod tests {
 
     #[test]
     fn list_and_count() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         store.create(test_pipeline("b")).unwrap();
         store.create(test_pipeline("a")).unwrap();
 
@@ -335,7 +455,8 @@ mod tests {
 
     #[test]
     fn update_pipeline() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("old")).unwrap();
 
         let updated = store.update(&record.id, test_pipeline("new")).unwrap();
@@ -350,22 +471,29 @@ mod tests {
 
     #[test]
     fn delete_pipeline() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         let record = store.create(test_pipeline("doomed")).unwrap();
+        let json_path = tmp.path().join(format!("{}.json", record.id.0));
+        assert!(json_path.exists());
+
         store.delete(&record.id).unwrap();
         assert!(store.get(&record.id).unwrap().is_none());
+        assert!(!json_path.exists());
     }
 
     #[test]
     fn delete_not_found() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         let err = store.delete(&PipelineId::new()).unwrap_err();
         assert!(matches!(err, PipelineStoreError::NotFound(_)));
     }
 
     #[test]
     fn pagination() {
-        let store = PipelineStore::open_in_memory().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
         for i in 0..5 {
             store.create(test_pipeline(&format!("p{i}"))).unwrap();
         }
@@ -376,5 +504,21 @@ mod tests {
         assert_eq!(page2.len(), 2);
         let page3 = store.list(2, 4).unwrap();
         assert_eq!(page3.len(), 1);
+    }
+
+    #[test]
+    fn record_run_updates_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = PipelineStore::open_in_memory(tmp.path()).unwrap();
+        let record = store.create(test_pipeline("runner")).unwrap();
+
+        store.record_run(&record.id).unwrap();
+        let after_one = store.get(&record.id).unwrap().unwrap();
+        assert_eq!(after_one.run_count, 1);
+        assert!(after_one.last_run_at.is_some());
+
+        store.record_run(&record.id).unwrap();
+        let after_two = store.get(&record.id).unwrap().unwrap();
+        assert_eq!(after_two.run_count, 2);
     }
 }

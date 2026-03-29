@@ -15,8 +15,9 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 fn test_state() -> AppState {
+    let pipelines_dir = tempfile::tempdir().unwrap().keep();
     AppState {
-        pipeline_store: Arc::new(PipelineStore::open_in_memory().unwrap()),
+        pipeline_store: Arc::new(PipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(flux_connectors::default_registry()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),

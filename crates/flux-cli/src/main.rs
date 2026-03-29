@@ -65,9 +65,13 @@ fn main() -> Result<()> {
                 .join(".horizon-flux");
             std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
 
+            let pipelines_dir = data_dir.join("pipelines");
             let pipeline_store = Arc::new(
-                flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"))
-                    .context("failed to open pipeline store")?,
+                flux_engine::PipelineStore::open(
+                    &data_dir.join("pipelines.db"),
+                    &pipelines_dir,
+                )
+                .context("failed to open pipeline store")?,
             );
             let run_store = Arc::new(
                 flux_datafusion::RunStore::open(&data_dir.join("runs.db"))
