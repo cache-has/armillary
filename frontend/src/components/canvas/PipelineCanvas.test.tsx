@@ -1,11 +1,17 @@
 // Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { PipelineCanvas } from './PipelineCanvas';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { ApiPipelineResponse } from '../../api/pipelines';
+
+// Mock environment API to prevent async state updates in tests
+vi.mock('../../api/environments', () => ({
+  listEnvironments: vi.fn().mockResolvedValue([]),
+  listTableOverrides: vi.fn().mockResolvedValue([]),
+}));
 
 // React Flow requires ResizeObserver, which jsdom doesn't provide.
 beforeAll(() => {

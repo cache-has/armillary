@@ -4,6 +4,7 @@
 import { useEffect, useRef } from 'react';
 import { PipelineCanvas } from './components/canvas';
 import { usePipelineStore } from './stores/pipelineStore';
+import { useEnvironmentStore } from './stores/environmentStore';
 import { listPipelines } from './api/pipelines';
 import type { ApiPipelineResponse } from './api/pipelines';
 
@@ -58,6 +59,7 @@ const DEMO_RESPONSE: ApiPipelineResponse = {
 function App() {
   const loadFromResponse = usePipelineStore((s) => s.loadFromResponse);
   const loadPipeline = usePipelineStore((s) => s.loadPipeline);
+  const setActiveEnvironment = useEnvironmentStore((s) => s.setActiveEnvironment);
   const initRef = useRef(false);
 
   useEffect(() => {
@@ -68,15 +70,22 @@ function App() {
     listPipelines(1, 0)
       .then((res) => {
         if (res.data.length > 0) {
-          loadPipeline(res.data[0].id);
+          loadPipeline(res.data[0].id).then(() => {
+            const pipeline = usePipelineStore.getState().apiPipeline;
+            if (pipeline) {
+              setActiveEnvironment(pipeline.default_environment);
+            }
+          });
         } else {
           loadFromResponse(DEMO_RESPONSE);
+          setActiveEnvironment(DEMO_RESPONSE.pipeline.default_environment);
         }
       })
       .catch(() => {
         loadFromResponse(DEMO_RESPONSE);
+        setActiveEnvironment(DEMO_RESPONSE.pipeline.default_environment);
       });
-  }, [loadFromResponse, loadPipeline]);
+  }, [loadFromResponse, loadPipeline, setActiveEnvironment]);
 
   return <PipelineCanvas />;
 }

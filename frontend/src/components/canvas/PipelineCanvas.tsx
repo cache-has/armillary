@@ -37,6 +37,8 @@ import { NodePalette, PALETTE_DRAG_TYPE } from './NodePalette';
 import type { PaletteItem } from './NodePalette';
 import { SidePanel } from './SidePanel';
 import { NodeEditorModal } from './NodeEditorModal';
+import { EnvironmentSelector } from './EnvironmentSelector';
+import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
@@ -89,6 +91,28 @@ function PipelineCanvasInner() {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [selectedNodeId, setSelectedNodeId]);
+
+  // Sync environment overrides → node envOverridden badges
+  const tableOverrides = useEnvironmentStore((s) => s.tableOverrides);
+  const activeEnvironment = useEnvironmentStore((s) => s.activeEnvironment);
+  useEffect(() => {
+    const overrideTables = new Set(tableOverrides.map((o) => o.table_name));
+    const currentNodes = usePipelineStore.getState().nodes;
+    const needsUpdate = currentNodes.some(
+      (n) => n.data.envOverridden !== overrideTables.has(n.data.label),
+    );
+    if (needsUpdate) {
+      usePipelineStore.getState().setNodes((prev) =>
+        prev.map((n) => ({
+          ...n,
+          data: {
+            ...n.data,
+            envOverridden: overrideTables.has(n.data.label),
+          },
+        })),
+      );
+    }
+  }, [tableOverrides, activeEnvironment]);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
@@ -502,6 +526,9 @@ function PipelineCanvasInner() {
         deleteKeyCode="Delete"
         multiSelectionKeyCode="Shift"
       >
+        <Panel position="top-left" className="env-selector-panel">
+          <EnvironmentSelector />
+        </Panel>
         <EdgeMarkerDefs />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
         <Controls />

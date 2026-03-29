@@ -98,7 +98,7 @@
   }
 }
 
-/* Environment override badge */
+/* Environment resolution badge */
 .pipeline-node__env-badge {
   position: absolute;
   top: -4px;
@@ -106,8 +106,15 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
   border: 2px solid var(--bg, #fff);
+}
+
+.pipeline-node__env-badge--override {
+  background: #22c55e;
+}
+
+.pipeline-node__env-badge--fallthrough {
+  background: #9ca3af;
 }
 
 /* Hover tooltip */

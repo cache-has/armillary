@@ -4,6 +4,7 @@
 import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { PipelineNode } from '../../types/pipeline';
+import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineNode.css';
 
 const roleIcons: Record<string, string> = {
@@ -24,6 +25,19 @@ const statusIndicators: Record<string, StatusMeta> = {
   success: { className: 'status-success', label: 'Success', icon: '\u2713' },
   error: { className: 'status-error', label: 'Error', icon: '\u2717' },
 };
+
+/** Small colored dot indicating environment resolution status. */
+function EnvironmentBadge({ envOverridden }: { envOverridden: boolean }) {
+  const activeEnv = useEnvironmentStore((s) => s.activeEnvironment);
+  const tooltip = envOverridden
+    ? `Resolving from: ${activeEnv} (override)`
+    : 'Resolving from: prod (fallthrough)';
+  const className = envOverridden
+    ? 'pipeline-node__env-badge pipeline-node__env-badge--override'
+    : 'pipeline-node__env-badge pipeline-node__env-badge--fallthrough';
+
+  return <span className={className} title={tooltip} />;
+}
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -97,12 +111,7 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
           )}
         </div>
       )}
-      {data.envOverridden && (
-        <span
-          className="pipeline-node__env-badge"
-          title="Environment override active"
-        />
-      )}
+      <EnvironmentBadge envOverridden={data.envOverridden} />
       {data.role !== 'sink' && (
         <Handle type="source" position={Position.Right} />
       )}

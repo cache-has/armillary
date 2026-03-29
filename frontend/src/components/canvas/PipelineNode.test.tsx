@@ -47,22 +47,22 @@ describe('PipelineNode', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows environment badge when overridden', () => {
+  it('shows override badge when environment overridden', () => {
     const { container } = renderNode({
       ...baseData,
       role: 'sink',
       envOverridden: true,
     });
     expect(
-      container.querySelector('.pipeline-node__env-badge'),
+      container.querySelector('.pipeline-node__env-badge--override'),
     ).toBeInTheDocument();
   });
 
-  it('hides environment badge when not overridden', () => {
+  it('shows fallthrough badge when not overridden', () => {
     const { container } = renderNode({ ...baseData, role: 'sink' });
     expect(
-      container.querySelector('.pipeline-node__env-badge'),
-    ).not.toBeInTheDocument();
+      container.querySelector('.pipeline-node__env-badge--fallthrough'),
+    ).toBeInTheDocument();
   });
 
   it('renders status indicator with correct class', () => {
