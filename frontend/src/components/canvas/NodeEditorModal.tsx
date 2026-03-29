@@ -102,7 +102,7 @@ export function NodeEditorModal() {
         // Fetch with rows so we can pass upstream data to single-node preview
         const result = await previewPipeline(
           pipelineId!,
-          { max_rows: 100 },
+          { mode: 'first_n', count: 100 },
           controller.signal,
         );
         if (controller.signal.aborted) return;

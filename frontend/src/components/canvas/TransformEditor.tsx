@@ -236,7 +236,7 @@ export function TransformEditor({
             code: codeRef.current,
           },
           upstream: hasUpstream ? upstreamRef.current : undefined,
-          sample: { max_rows: 50 },
+          sample: { mode: 'first_n', count: 50 },
         },
         controller.signal,
       );

@@ -42,7 +42,7 @@ function PostgresSourceForm({
           connector: 'postgres',
           config: { ...config, query: 'SELECT 1' },
         },
-        sample: { max_rows: 1 },
+        sample: { mode: 'first_n', count: 1 },
       });
       setTestResult({ ok: true, message: 'Connection successful' });
     } catch (err) {
@@ -236,7 +236,7 @@ function SourcePreview({ config, connector }: { config: Record<string, unknown>;
     try {
       const result = await previewNode({
         node: { type: 'source', connector, config },
-        sample: { max_rows: 10 },
+        sample: { mode: 'first_n', count: 10 },
       });
       setPreview(result);
     } catch (err) {

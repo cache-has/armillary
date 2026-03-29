@@ -13,11 +13,11 @@ import type { ApiPreviewNodeResponse, ApiColumnStats } from '../../api/pipelines
 const samplePreview: ApiPreviewNodeResponse = {
   node_id: 'node-1',
   columns: [
-    { name: 'id', data_type: 'Int64' },
-    { name: 'name', data_type: 'Utf8' },
-    { name: 'score', data_type: 'Float64' },
-    { name: 'active', data_type: 'Boolean' },
-    { name: 'created_at', data_type: 'Timestamp(Microsecond, None)' },
+    { name: 'id', data_type: 'Int64', nullable: false },
+    { name: 'name', data_type: 'Utf8', nullable: true },
+    { name: 'score', data_type: 'Float64', nullable: true },
+    { name: 'active', data_type: 'Boolean', nullable: false },
+    { name: 'created_at', data_type: 'Timestamp(Microsecond, None)', nullable: true },
   ],
   row_count: 3,
   duration_ms: 12,

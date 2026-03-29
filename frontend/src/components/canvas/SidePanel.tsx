@@ -4,14 +4,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { PipelineNode } from '../../types/pipeline';
-import type { ApiNode, ApiColumnInfo } from '../../api/pipelines';
+import type { ApiNode, ApiColumnInfo, ApiSampleConfig } from '../../api/pipelines';
 import {
   previewPipeline,
+  updatePipeline,
   fetchPipelineRuns,
   type ApiPreviewNodeResponse,
   type ApiNodeRunStats,
 } from '../../api/pipelines';
+import { buildApiPipeline } from '../../stores/pipelineStore';
 import { PreviewTable } from './PreviewTable';
+import { SampleConfigDropdown } from './SampleConfigDropdown';
 import { computeSchemaDiff, type SchemaDiff } from './schemaDiff';
 import './SidePanel.css';
 
@@ -207,13 +210,16 @@ interface NodeContentProps {
   apiNode: ApiNode | undefined;
   preview: ApiPreviewNodeResponse | null;
   previewLoading: boolean;
+  previewError?: string | null;
   sampleMethod?: string;
   runStats: ApiNodeRunStats | null;
   upstreamNames: string[];
   schemaDiff?: SchemaDiff | null;
+  sampleConfig?: ApiSampleConfig;
+  onSampleConfigChange?: (config: ApiSampleConfig) => void;
 }
 
-function SourceContent({ apiNode, preview, previewLoading, sampleMethod, runStats }: NodeContentProps) {
+function SourceContent({ apiNode, preview, previewLoading, previewError, sampleMethod, runStats, sampleConfig, onSampleConfigChange }: NodeContentProps) {
   const connector = apiNode?.connector ?? 'unknown';
   const config = apiNode?.config as Record<string, unknown> | undefined;
 
@@ -252,8 +258,13 @@ function SourceContent({ apiNode, preview, previewLoading, sampleMethod, runStat
       </div>
 
       <div className="side-panel__section">
-        <div className="side-panel__section-title">Preview</div>
-        <PreviewTable preview={preview} loading={previewLoading} sampleMethod={sampleMethod} />
+        <div className="side-panel__section-title">
+          Preview
+          {onSampleConfigChange && (
+            <SampleConfigDropdown value={sampleConfig} onChange={onSampleConfigChange} />
+          )}
+        </div>
+        <PreviewTable preview={preview} loading={previewLoading} error={previewError} sampleMethod={sampleMethod} />
       </div>
 
       <div className="side-panel__section">
@@ -272,10 +283,13 @@ function TransformContent({
   apiNode,
   preview,
   previewLoading,
+  previewError,
   sampleMethod,
   runStats,
   upstreamNames,
   schemaDiff,
+  sampleConfig,
+  onSampleConfigChange,
 }: NodeContentProps) {
   const mode = apiNode?.mode ?? 'sql';
   const code = apiNode?.code ?? '';
@@ -310,10 +324,16 @@ function TransformContent({
       </div>
 
       <div className="side-panel__section">
-        <div className="side-panel__section-title">Preview</div>
+        <div className="side-panel__section-title">
+          Preview
+          {onSampleConfigChange && (
+            <SampleConfigDropdown value={sampleConfig} onChange={onSampleConfigChange} />
+          )}
+        </div>
         <PreviewTable
           preview={preview}
           loading={previewLoading}
+          error={previewError}
           sampleMethod={sampleMethod}
           columnDiffs={schemaDiff?.outputDiffs}
         />
@@ -460,6 +480,7 @@ export function SidePanel() {
 
   const [preview, setPreview] = useState<Map<string, ApiPreviewNodeResponse>>(new Map());
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [sampleMethod, setSampleMethod] = useState<string | undefined>(undefined);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
 
@@ -507,10 +528,11 @@ export function SidePanel() {
         return;
       }
       setPreviewLoading(true);
+      setPreviewError(null);
       try {
         const res = await previewPipeline(
           pipelineId!,
-          { max_rows: 100 },
+          undefined, // Use pipeline's sample_config (backend falls back to default)
           controller.signal,
         );
         if (controller.signal.aborted) return;
@@ -523,7 +545,7 @@ export function SidePanel() {
         setSampleMethod(res.sample_method);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
-        // Preview not available (backend may not be running)
+        setPreviewError((err as Error).message);
       } finally {
         if (!controller.signal.aborted) setPreviewLoading(false);
       }
@@ -589,6 +611,25 @@ export function SidePanel() {
     setSelectedNodeId(null);
   }, [setSelectedNodeId]);
 
+  // Update the pipeline's sample_config and invalidate preview cache.
+  const handleSampleConfigChange = useCallback(
+    async (config: ApiSampleConfig) => {
+      if (!pipelineId || !apiPipeline) return;
+      const updatedPipeline = { ...apiPipeline, sample_config: config };
+      try {
+        const full = buildApiPipeline(updatedPipeline, nodes, edges);
+        await updatePipeline(pipelineId, full);
+        // Invalidate cache so next render re-fetches preview with new config
+        previewCacheRef.current = null;
+        // Force a version bump to trigger the preview useEffect
+        usePipelineStore.getState().loadPipeline(pipelineId);
+      } catch (err) {
+        console.error('Failed to save sample config:', err);
+      }
+    },
+    [pipelineId, apiPipeline, nodes, edges],
+  );
+
   // Compute schema diff for transform nodes by comparing upstream columns to output
   const schemaDiff: SchemaDiff | null = (() => {
     if (!selectedNode || selectedNode.data.role !== 'transform') return null;
@@ -620,6 +661,9 @@ export function SidePanel() {
         runStats: runStats.get(selectedNodeId!) ?? null,
         upstreamNames,
         schemaDiff,
+        previewError,
+        sampleConfig: apiPipeline?.sample_config,
+        onSampleConfigChange: handleSampleConfigChange,
       }
     : null;
 

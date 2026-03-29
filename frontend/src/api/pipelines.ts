@@ -37,6 +37,27 @@ export interface ApiEdge {
   to: string;
 }
 
+/** Sample configuration matching the backend's SampleConfig enum. */
+export type ApiSampleConfig =
+  | { mode: 'first_n'; count: number }
+  | { mode: 'random'; count: number; seed: number }
+  | { mode: 'full' };
+
+/** Default sample configuration. */
+export const DEFAULT_SAMPLE_CONFIG: ApiSampleConfig = { mode: 'first_n', count: 100 };
+
+/** Format a sample config for display (matches backend format_sample_method). */
+export function formatSampleConfig(config: ApiSampleConfig): string {
+  switch (config.mode) {
+    case 'first_n':
+      return `first ${config.count}`;
+    case 'random':
+      return `random ${config.count}`;
+    case 'full':
+      return 'full';
+  }
+}
+
 /** Full pipeline definition as returned by the backend. */
 export interface ApiPipeline {
   name: string;
@@ -44,6 +65,7 @@ export interface ApiPipeline {
   default_environment: string;
   variables: Record<string, unknown>;
   environment_overrides: Record<string, Record<string, unknown>>;
+  sample_config?: ApiSampleConfig;
   nodes: ApiNode[];
   edges: ApiEdge[];
 }
@@ -175,13 +197,28 @@ export interface ApiNodePreviewRequest {
     code?: string;
   };
   upstream?: Record<string, Record<string, unknown>[]>;
-  sample?: { max_rows?: number };
+  sample?: ApiSampleConfig;
+}
+
+/** Error thrown by preview API calls, includes HTTP status for timeout detection. */
+export class PreviewError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'PreviewError';
+    this.status = status;
+  }
+
+  get isTimeout(): boolean {
+    return this.status === 504;
+  }
 }
 
 /** Run a full pipeline preview (sample data through all nodes). */
 export async function previewPipeline(
   id: string,
-  sample?: { max_rows?: number },
+  sample?: ApiSampleConfig,
   signal?: AbortSignal,
 ): Promise<ApiPreviewResponse> {
   const res = await fetch(`${BASE}/${id}/preview`, {
@@ -191,7 +228,9 @@ export async function previewPipeline(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`Preview failed: ${res.status} ${res.statusText}`);
+    const body = await res.json().catch(() => null);
+    const msg = body?.error ?? `Preview failed: ${res.status} ${res.statusText}`;
+    throw new PreviewError(msg, res.status);
   }
   return res.json();
 }
@@ -208,7 +247,9 @@ export async function previewNode(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`Node preview failed: ${res.status} ${res.statusText}`);
+    const body = await res.json().catch(() => null);
+    const msg = body?.error ?? `Node preview failed: ${res.status} ${res.statusText}`;
+    throw new PreviewError(msg, res.status);
   }
   return res.json();
 }

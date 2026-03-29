@@ -55,6 +55,10 @@ impl ApiError {
     pub fn internal(message: impl Into<String>) -> (StatusCode, Json<Self>) {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(Self::new(message)))
     }
+
+    pub fn gateway_timeout(message: impl Into<String>) -> (StatusCode, Json<Self>) {
+        (StatusCode::GATEWAY_TIMEOUT, Json(Self::new(message)))
+    }
 }
 
 impl IntoResponse for ApiError {

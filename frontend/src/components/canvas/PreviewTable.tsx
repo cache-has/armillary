@@ -123,6 +123,8 @@ const ROW_HEIGHT = 28;
 export interface PreviewTableProps {
   preview: ApiPreviewNodeResponse | null;
   loading: boolean;
+  /** Error message to display (e.g. timeout). */
+  error?: string | null;
   sampleMethod?: string;
   /** Per-column diff info (parallel to preview.columns). When provided, column headers are color-coded. */
   columnDiffs?: ColumnDiff[];
@@ -154,7 +156,7 @@ export function formatColumnStatsTooltip(stats: ApiColumnStats): string {
   }
 }
 
-export function PreviewTable({ preview, loading, sampleMethod, columnDiffs }: PreviewTableProps) {
+export function PreviewTable({ preview, loading, error, sampleMethod, columnDiffs }: PreviewTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<SortState | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
@@ -244,6 +246,15 @@ export function PreviewTable({ preview, loading, sampleMethod, columnDiffs }: Pr
             <div key={i} className="preview-table__skeleton-row" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  // Error state (e.g. timeout)
+  if (error) {
+    return (
+      <div className="preview-table__error" data-testid="preview-table-error">
+        {error}
       </div>
     );
   }

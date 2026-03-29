@@ -7,18 +7,18 @@ import { generateJoinSql, type JoinInput, type JoinMapping } from './JoinConfigu
 const orders: JoinInput = {
   nodeName: 'orders',
   columns: [
-    { name: 'id', data_type: 'Int64' },
-    { name: 'customer_id', data_type: 'Int64' },
-    { name: 'amount', data_type: 'Float64' },
+    { name: 'id', data_type: 'Int64', nullable: false },
+    { name: 'customer_id', data_type: 'Int64', nullable: false },
+    { name: 'amount', data_type: 'Float64', nullable: true },
   ],
 };
 
 const customers: JoinInput = {
   nodeName: 'customers',
   columns: [
-    { name: 'id', data_type: 'Int64' },
-    { name: 'name', data_type: 'Utf8' },
-    { name: 'email', data_type: 'Utf8' },
+    { name: 'id', data_type: 'Int64', nullable: false },
+    { name: 'name', data_type: 'Utf8', nullable: true },
+    { name: 'email', data_type: 'Utf8', nullable: true },
   ],
 };
 
@@ -81,11 +81,11 @@ describe('generateJoinSql', () => {
   it('handles tables with no colliding columns', () => {
     const left: JoinInput = {
       nodeName: 'a',
-      columns: [{ name: 'x', data_type: 'Int64' }],
+      columns: [{ name: 'x', data_type: 'Int64', nullable: false }],
     };
     const right: JoinInput = {
       nodeName: 'b',
-      columns: [{ name: 'y', data_type: 'Int64' }],
+      columns: [{ name: 'y', data_type: 'Int64', nullable: false }],
     };
     const sql = generateJoinSql(left, right, 'INNER', [
       { leftCol: 'x', rightCol: 'y' },

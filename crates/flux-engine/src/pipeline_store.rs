@@ -294,6 +294,7 @@ mod tests {
             default_environment: "dev".to_string(),
             variables: Default::default(),
             environment_overrides: Default::default(),
+            sample_config: None,
             nodes: vec![],
             edges: vec![],
         }

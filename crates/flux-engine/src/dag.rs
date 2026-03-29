@@ -255,6 +255,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![
                 source_node("src"),
                 transform_node("xform"),
@@ -286,6 +287,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![
                 source_node("src_a"),
                 source_node("src_b"),
@@ -315,6 +317,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![
                 source_node("a"),
                 transform_node("b"),
@@ -340,6 +343,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![
                 source_node("src"),
                 transform_node("xform"),
@@ -360,6 +364,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![source_node("a"), source_node("b"), sink_node("out")],
             edges: vec![
                 Edge::new("a", "b"), // b is a source but has upstream
@@ -381,6 +386,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![],
             edges: vec![],
         };
@@ -396,6 +402,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![source_node("a"), source_node("a"), sink_node("out")],
             edges: vec![Edge::new("a", "out")],
         };
@@ -414,6 +421,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![
                 Edge::new("src", "ghost"), // ghost doesn't exist
@@ -433,6 +441,7 @@ mod tests {
             default_environment: "dev".into(),
             variables: HashMap::new(),
             environment_overrides: HashMap::new(),
+            sample_config: None,
             nodes: vec![
                 source_node("src"),
                 transform_node("a"),

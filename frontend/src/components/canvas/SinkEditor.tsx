@@ -41,7 +41,7 @@ function PostgresSinkForm({
           connector: 'postgres',
           config: { ...config, query: 'SELECT 1' },
         },
-        sample: { max_rows: 1 },
+        sample: { mode: 'first_n', count: 1 },
       });
       setTestResult({ ok: true, message: 'Connection successful' });
     } catch (err) {

@@ -274,18 +274,29 @@ async fn preview_pipeline(
         .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
 
     let provider_registry = state.connector_registry.to_provider_registry();
+    // Use request sample config, then pipeline default, then global default.
+    let sample = req
+        .sample
+        .or_else(|| record.pipeline.sample_config.clone())
+        .unwrap_or_default();
     let options = PreviewOptions {
-        sample: req.sample.unwrap_or_default(),
+        sample,
         cancel: Arc::new(AtomicBool::new(false)),
         progress: None,
     };
 
-    let preview = PipelineExecutor::preview(&record.pipeline, &provider_registry, &options)
-        .await
-        .map_err(|e| {
-            error!(pipeline = %record.pipeline.name, error = %e, "preview failed");
-            ApiError::internal(e.to_string())
-        })?;
+    let preview = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        PipelineExecutor::preview(&record.pipeline, &provider_registry, &options),
+    )
+    .await
+    .map_err(|_| {
+        ApiError::gateway_timeout("preview timed out after 5 seconds")
+    })?
+    .map_err(|e| {
+        error!(pipeline = %record.pipeline.name, error = %e, "preview failed");
+        ApiError::internal(e.to_string())
+    })?;
 
     let sample_method = format_sample_method(&preview.sample_config);
 

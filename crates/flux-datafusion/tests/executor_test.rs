@@ -196,6 +196,7 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
         default_environment: "dev".to_string(),
         variables: HashMap::new(),
         environment_overrides: HashMap::new(),
+        sample_config: None,
         nodes,
         edges,
     }

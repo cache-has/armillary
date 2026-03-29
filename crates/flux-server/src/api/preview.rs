@@ -28,6 +28,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error};
 
+/// Timeout for single-node preview execution.
+const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Build the `/preview` sub-router.
 pub fn router() -> Router<AppState> {
     Router::new().route("/node", post(preview_node))
@@ -89,12 +92,16 @@ async fn preview_node(
 
             debug!(connector = %connector, "previewing source node");
 
-            let batches = PipelineExecutor::execute_source(&node_id, &src_cfg, &registry)
-                .await
-                .map_err(|e| {
-                    error!(connector = %connector, error = %e, "source preview failed");
-                    ApiError::internal(e.to_string())
-                })?;
+            let batches = tokio::time::timeout(
+                PREVIEW_TIMEOUT,
+                PipelineExecutor::execute_source(&node_id, &src_cfg, &registry),
+            )
+            .await
+            .map_err(|_| ApiError::gateway_timeout("preview timed out after 5 seconds"))?
+            .map_err(|e| {
+                error!(connector = %connector, error = %e, "source preview failed");
+                ApiError::internal(e.to_string())
+            })?;
 
             let sampled = sample_batches(batches, &req.sample.unwrap_or_default());
             build_preview_response("preview", &sampled, start)
@@ -123,29 +130,33 @@ async fn preview_node(
 
             debug!(mode = ?mode, upstreams = upstream_refs.len(), "previewing transform node");
 
-            let batches = match mode {
-                TransformMode::Sql => {
-                    PipelineExecutor::execute_sql_transform(&code, upstream_refs, None)
+            let batches = tokio::time::timeout(PREVIEW_TIMEOUT, async {
+                match mode {
+                    TransformMode::Sql => {
+                        PipelineExecutor::execute_sql_transform(&code, upstream_refs, None)
+                            .await
+                            .map_err(|e| {
+                                error!(error = %e, "SQL transform preview failed");
+                                ApiError::internal(e.to_string())
+                            })
+                    }
+                    TransformMode::Python => {
+                        let variables = HashMap::new();
+                        flux_datafusion::python_runtime::execute_python_transform(
+                            &code,
+                            upstream_refs,
+                            &variables,
+                        )
                         .await
                         .map_err(|e| {
-                            error!(error = %e, "SQL transform preview failed");
+                            error!(error = %e, "Python transform preview failed");
                             ApiError::internal(e.to_string())
-                        })?
+                        })
+                    }
                 }
-                TransformMode::Python => {
-                    let variables = HashMap::new();
-                    flux_datafusion::python_runtime::execute_python_transform(
-                        &code,
-                        upstream_refs,
-                        &variables,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!(error = %e, "Python transform preview failed");
-                        ApiError::internal(e.to_string())
-                    })?
-                }
-            };
+            })
+            .await
+            .map_err(|_| ApiError::gateway_timeout("preview timed out after 5 seconds"))??;
 
             build_preview_response("preview", &batches, start)
         }

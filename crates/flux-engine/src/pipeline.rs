@@ -3,6 +3,7 @@
 
 use crate::edge::Edge;
 use crate::node::{Node, NodeId};
+use crate::sample::SampleConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -20,6 +21,10 @@ pub struct Pipeline {
     /// Outer key = environment name, inner key = node id, value = override config.
     #[serde(default)]
     pub environment_overrides: HashMap<String, HashMap<String, serde_json::Value>>,
+    /// Default sample configuration for preview execution.
+    /// When `None`, previews use `SampleConfig::default()` (first 100 rows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_config: Option<SampleConfig>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
 }
