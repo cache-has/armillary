@@ -41,6 +41,10 @@ export interface ContextMenuStateNode {
   nodeRole: NodeRole;
   nodeLabel: string;
   isPinned: boolean;
+  /** Whether this node has an override in the active environment. */
+  hasOverride: boolean;
+  /** The currently active environment name. */
+  activeEnvironment: string;
   x: number;
   y: number;
 }
@@ -116,12 +120,28 @@ function buildMenuEntries(
               nodeId: state.nodeId,
             }),
         },
-        {
-          type: 'item',
-          label: 'Create Dev Override',
-          onClick: () =>
-            onAction('create-dev-override', { nodeId: state.nodeId }),
-        },
+        state.hasOverride
+          ? {
+              type: 'item' as const,
+              label: 'Remove Override',
+              onClick: () =>
+                onAction('remove-override', {
+                  nodeId: state.nodeId,
+                  nodeLabel: state.nodeLabel,
+                  environment: state.activeEnvironment,
+                }),
+            }
+          : {
+              type: 'item' as const,
+              label: `Create ${state.activeEnvironment} Override`,
+              disabled: state.activeEnvironment === 'prod',
+              onClick: () =>
+                onAction('create-dev-override', {
+                  nodeId: state.nodeId,
+                  nodeLabel: state.nodeLabel,
+                  environment: state.activeEnvironment,
+                }),
+            },
         {
           type: 'item',
           label: 'View Preview',

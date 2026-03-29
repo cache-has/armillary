@@ -2,9 +2,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { useEnvironmentStore } from '../../stores/environmentStore';
+import { usePipelineStore } from '../../stores/pipelineStore';
+
+// Mock pipeline store to provide node labels
+vi.mock('../../stores/pipelineStore', () => ({
+  usePipelineStore: vi.fn((selector) => {
+    const state = {
+      nodes: [
+        { id: '1', data: { label: 'users' } },
+        { id: '2', data: { label: 'orders' } },
+      ],
+    };
+    return selector(state);
+  }),
+}));
+
+const mockListTableOverrides = vi.fn().mockResolvedValue([]);
 
 // Mock API calls
 vi.mock('../../api/environments', async () => {
@@ -15,10 +31,12 @@ vi.mock('../../api/environments', async () => {
       { name: 'prod', fallback: null },
       { name: 'dev', fallback: 'prod' },
     ]),
-    listTableOverrides: vi.fn().mockResolvedValue([]),
+    listTableOverrides: (...args: unknown[]) => mockListTableOverrides(...args),
     createEnvironment: vi.fn().mockResolvedValue({ name: 'staging', fallback: 'prod' }),
     deleteEnvironment: vi.fn().mockResolvedValue(undefined),
     updateEnvironment: vi.fn().mockResolvedValue({ name: 'dev', fallback: 'staging' }),
+    createTableOverride: vi.fn().mockResolvedValue(undefined),
+    deleteTableOverride: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -87,5 +105,32 @@ describe('EnvironmentManagementPanel', () => {
 
     fireEvent.click(screen.getByLabelText('Close'));
     expect(useEnvironmentStore.getState().managementPanelOpen).toBe(false);
+  });
+
+  it('shows override toggle buttons with counts', () => {
+    useEnvironmentStore.setState({ managementPanelOpen: true });
+    render(<EnvironmentManagementPanel />);
+
+    // Both environments should have clickable override count buttons
+    const toggleButtons = screen.getAllByRole('button', { name: /table override/i });
+    expect(toggleButtons.length).toBe(2);
+  });
+
+  it('expands override list when toggle is clicked', async () => {
+    mockListTableOverrides.mockResolvedValue([
+      { environment: 'dev', schema_name: 'public', table_name: 'users' },
+    ]);
+    useEnvironmentStore.setState({ managementPanelOpen: true });
+    render(<EnvironmentManagementPanel />);
+
+    // Click the dev override toggle
+    const toggleButtons = screen.getAllByRole('button', { name: /table override/i });
+    await act(async () => {
+      fireEvent.click(toggleButtons[1]); // dev is second
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('users')).toBeTruthy();
+    });
   });
 });

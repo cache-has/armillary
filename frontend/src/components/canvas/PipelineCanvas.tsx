@@ -266,12 +266,15 @@ function PipelineCanvasInner() {
         return;
       }
 
+      const envStore = useEnvironmentStore.getState();
       setContextMenu({
         kind: 'node',
         nodeId: node.id,
         nodeRole: data.role,
         nodeLabel: data.label,
         isPinned: data.pinnedPosition,
+        hasOverride: envStore.hasOverride(data.label),
+        activeEnvironment: envStore.activeEnvironment,
         x: event.clientX,
         y: event.clientY,
       });
@@ -476,9 +479,24 @@ function PipelineCanvasInner() {
           }));
           break;
         }
-        case 'create-dev-override':
+        case 'create-dev-override': {
+          const env = payload?.environment as string;
+          const label = payload?.nodeLabel as string;
+          if (env && label) {
+            useEnvironmentStore.getState().addTableOverride(env, label);
+          }
+          break;
+        }
+        case 'remove-override': {
+          const env = payload?.environment as string;
+          const label = payload?.nodeLabel as string;
+          if (env && label) {
+            useEnvironmentStore.getState().removeTableOverride(env, label);
+          }
+          break;
+        }
         case 'view-preview':
-          // These will be implemented in later planning phases
+          // Will be implemented in a later planning phase
           break;
       }
     },

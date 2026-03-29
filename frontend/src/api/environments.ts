@@ -89,6 +89,43 @@ export async function listTableOverrides(
   return res.json();
 }
 
+/** Create a table override in an environment. */
+export async function createTableOverride(
+  envName: string,
+  tableName: string,
+  schemaName: string = 'public',
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/${encodeURIComponent(envName)}/tables/${encodeURIComponent(tableName)}/override`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_name: schemaName }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Failed to create table override: ${res.status}`);
+  }
+}
+
+/** Delete a table override from an environment. */
+export async function deleteTableOverride(
+  envName: string,
+  tableName: string,
+  schemaName: string = 'public',
+): Promise<void> {
+  const qs = schemaName !== 'public' ? `?schema_name=${encodeURIComponent(schemaName)}` : '';
+  const res = await fetch(
+    `${BASE}/${encodeURIComponent(envName)}/tables/${encodeURIComponent(tableName)}/override${qs}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Failed to delete table override: ${res.status}`);
+  }
+}
+
 /** Resolve a table through the fallback chain. */
 export async function resolveTable(
   table: string,

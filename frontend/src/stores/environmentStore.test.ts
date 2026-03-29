@@ -4,6 +4,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useEnvironmentStore } from './environmentStore';
 
+const mockCreateTableOverride = vi.fn().mockResolvedValue(undefined);
+const mockDeleteTableOverride = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('../api/environments', () => ({
   listEnvironments: vi.fn().mockResolvedValue([
     { name: 'prod', fallback: null },
@@ -12,6 +15,8 @@ vi.mock('../api/environments', () => ({
   listTableOverrides: vi.fn().mockResolvedValue([
     { environment: 'dev', schema_name: 'public', table_name: 'users' },
   ]),
+  createTableOverride: (...args: unknown[]) => mockCreateTableOverride(...args),
+  deleteTableOverride: (...args: unknown[]) => mockDeleteTableOverride(...args),
 }));
 
 describe('environmentStore', () => {
@@ -50,5 +55,28 @@ describe('environmentStore', () => {
     await useEnvironmentStore.getState().setActiveEnvironment('dev');
     expect(useEnvironmentStore.getState().hasOverride('users')).toBe(true);
     expect(useEnvironmentStore.getState().hasOverride('orders')).toBe(false);
+  });
+
+  it('addTableOverride calls API and refreshes overrides for active env', async () => {
+    useEnvironmentStore.setState({ activeEnvironment: 'dev' });
+    await useEnvironmentStore.getState().addTableOverride('dev', 'orders');
+    expect(mockCreateTableOverride).toHaveBeenCalledWith('dev', 'orders', undefined);
+    // Should have refreshed overrides since dev is the active env
+    const { tableOverrides } = useEnvironmentStore.getState();
+    expect(tableOverrides).toHaveLength(1); // from mock
+  });
+
+  it('removeTableOverride calls API and refreshes overrides for active env', async () => {
+    useEnvironmentStore.setState({ activeEnvironment: 'dev' });
+    await useEnvironmentStore.getState().removeTableOverride('dev', 'users');
+    expect(mockDeleteTableOverride).toHaveBeenCalledWith('dev', 'users', undefined);
+  });
+
+  it('addTableOverride does not refresh overrides for non-active env', async () => {
+    useEnvironmentStore.setState({ activeEnvironment: 'prod', tableOverrides: [] });
+    await useEnvironmentStore.getState().addTableOverride('dev', 'orders');
+    expect(mockCreateTableOverride).toHaveBeenCalled();
+    // Should not have refreshed since dev is not active
+    expect(useEnvironmentStore.getState().tableOverrides).toHaveLength(0);
   });
 });

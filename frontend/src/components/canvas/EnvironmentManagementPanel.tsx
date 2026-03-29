@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useEnvironmentStore } from '../../stores/environmentStore';
+import { usePipelineStore } from '../../stores/pipelineStore';
 import { listTableOverrides, type ApiTableOverride } from '../../api/environments';
 import { ConfirmDialog } from './ConfirmDialog';
 import './EnvironmentManagementPanel.css';
@@ -43,10 +44,20 @@ export function EnvironmentManagementPanel() {
   const addEnvironment = useEnvironmentStore((s) => s.addEnvironment);
   const removeEnvironment = useEnvironmentStore((s) => s.removeEnvironment);
   const updateFallback = useEnvironmentStore((s) => s.updateFallback);
+  const addTableOverride = useEnvironmentStore((s) => s.addTableOverride);
+  const removeTableOverride = useEnvironmentStore((s) => s.removeTableOverride);
   const storeError = useEnvironmentStore((s) => s.error);
 
-  // Per-environment override counts
+  // Node labels for the create-override dropdown
+  const nodeLabels = usePipelineStore((s) => s.nodes.map((n) => n.data.label));
+
+  // Per-environment override counts and expanded override lists
   const [overrideCounts, setOverrideCounts] = useState<Record<string, number>>({});
+  const [expandedEnv, setExpandedEnv] = useState<string | null>(null);
+  const [envOverrides, setEnvOverrides] = useState<ApiTableOverride[]>([]);
+  const [loadingOverrides, setLoadingOverrides] = useState(false);
+  const [newOverrideTable, setNewOverrideTable] = useState('');
+  const [creatingOverride, setCreatingOverride] = useState(false);
 
   // Create form state
   const [newName, setNewName] = useState('');
@@ -141,9 +152,62 @@ export function EnvironmentManagementPanel() {
     }
   }, [editingFallback, editFallbackValue, updateFallback]);
 
+  // Toggle override list expansion for an environment
+  const handleToggleOverrides = useCallback(async (envName: string) => {
+    if (expandedEnv === envName) {
+      setExpandedEnv(null);
+      setEnvOverrides([]);
+      return;
+    }
+    setExpandedEnv(envName);
+    setLoadingOverrides(true);
+    try {
+      const overrides = await listTableOverrides(envName);
+      setEnvOverrides(overrides);
+    } catch {
+      setEnvOverrides([]);
+    } finally {
+      setLoadingOverrides(false);
+    }
+  }, [expandedEnv]);
+
+  // Create a table override from the panel
+  const handleCreateOverride = useCallback(async (envName: string) => {
+    const table = newOverrideTable.trim();
+    if (!table) return;
+    setCreatingOverride(true);
+    try {
+      await addTableOverride(envName, table);
+      setNewOverrideTable('');
+      // Refresh the override list
+      const overrides = await listTableOverrides(envName);
+      setEnvOverrides(overrides);
+      setOverrideCounts((prev) => ({ ...prev, [envName]: overrides.length }));
+    } catch (err) {
+      setFormError((err as Error).message);
+    } finally {
+      setCreatingOverride(false);
+    }
+  }, [newOverrideTable, addTableOverride]);
+
+  // Delete a table override from the panel
+  const handleDeleteOverride = useCallback(async (envName: string, tableName: string, schemaName?: string) => {
+    try {
+      await removeTableOverride(envName, tableName, schemaName);
+      // Refresh the override list
+      const overrides = await listTableOverrides(envName);
+      setEnvOverrides(overrides);
+      setOverrideCounts((prev) => ({ ...prev, [envName]: overrides.length }));
+    } catch (err) {
+      setFormError((err as Error).message);
+    }
+  }, [removeTableOverride]);
+
   const handleClose = useCallback(() => {
     setOpen(false);
     setEditingFallback(null);
+    setExpandedEnv(null);
+    setEnvOverrides([]);
     setFormError(null);
   }, [setOpen]);
 
@@ -219,10 +283,68 @@ export function EnvironmentManagementPanel() {
 
                     <div className="env-panel__item-meta">
                       <span className="env-panel__chain">{chain}</span>
-                      <span className="env-panel__overrides-count">
+                      <button
+                        className="env-panel__overrides-toggle"
+                        onClick={() => handleToggleOverrides(env.name)}
+                      >
                         {count} table override{count !== 1 ? 's' : ''}
-                      </span>
+                        <span className="env-panel__overrides-chevron">
+                          {expandedEnv === env.name ? '\u25B4' : '\u25BE'}
+                        </span>
+                      </button>
                     </div>
+
+                    {expandedEnv === env.name && (
+                      <div className="env-panel__overrides">
+                        {loadingOverrides ? (
+                          <div className="env-panel__overrides-loading">Loading...</div>
+                        ) : envOverrides.length === 0 ? (
+                          <div className="env-panel__overrides-empty">No overrides</div>
+                        ) : (
+                          <ul className="env-panel__overrides-list">
+                            {envOverrides.map((o) => (
+                              <li key={`${o.schema_name}.${o.table_name}`} className="env-panel__override-item">
+                                <span className="env-panel__override-name">
+                                  {o.schema_name !== 'public' ? `${o.schema_name}.` : ''}{o.table_name}
+                                </span>
+                                <button
+                                  className="env-panel__item-btn env-panel__item-btn--danger"
+                                  onClick={() => handleDeleteOverride(env.name, o.table_name, o.schema_name)}
+                                  title="Remove override"
+                                >
+                                  Remove
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        {/* Create override form */}
+                        {!isProd && (
+                          <div className="env-panel__override-create">
+                            <select
+                              className="env-panel__override-select"
+                              value={newOverrideTable}
+                              onChange={(e) => setNewOverrideTable(e.target.value)}
+                            >
+                              <option value="">Select a table...</option>
+                              {nodeLabels
+                                .filter((label) => !envOverrides.some((o) => o.table_name === label))
+                                .map((label) => (
+                                  <option key={label} value={label}>{label}</option>
+                                ))}
+                            </select>
+                            <button
+                              className="env-panel__override-add-btn"
+                              onClick={() => handleCreateOverride(env.name)}
+                              disabled={creatingOverride || !newOverrideTable.trim()}
+                            >
+                              {creatingOverride ? '...' : 'Add'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {editingFallback === env.name && (
                       <div className="env-panel__fallback-editor">

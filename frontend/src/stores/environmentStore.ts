@@ -8,6 +8,8 @@ import {
   createEnvironment,
   deleteEnvironment,
   updateEnvironment,
+  createTableOverride,
+  deleteTableOverride,
   type ApiEnvironment,
   type ApiTableOverride,
 } from '../api/environments';
@@ -40,6 +42,10 @@ export interface EnvironmentStoreActions {
   removeEnvironment: (name: string) => Promise<void>;
   /** Update an environment's fallback and refresh the list. */
   updateFallback: (name: string, fallback: string | null) => Promise<void>;
+  /** Create a table override in the given environment and refresh overrides. */
+  addTableOverride: (envName: string, tableName: string, schemaName?: string) => Promise<void>;
+  /** Delete a table override from the given environment and refresh overrides. */
+  removeTableOverride: (envName: string, tableName: string, schemaName?: string) => Promise<void>;
   /** Whether the environment management panel is open. */
   managementPanelOpen: boolean;
   /** Toggle the management panel. */
@@ -82,6 +88,33 @@ export const useEnvironmentStore = create<EnvironmentStore>((set, get) => ({
 
   hasOverride: (tableName: string) => {
     return get().tableOverrides.some((o) => o.table_name === tableName);
+  },
+
+  addTableOverride: async (envName: string, tableName: string, schemaName?: string) => {
+    set({ error: null });
+    try {
+      await createTableOverride(envName, tableName, schemaName);
+      // Refresh overrides if the affected environment is the active one
+      if (get().activeEnvironment === envName) {
+        await get().fetchTableOverrides();
+      }
+    } catch (err) {
+      set({ error: (err as Error).message });
+      throw err;
+    }
+  },
+
+  removeTableOverride: async (envName: string, tableName: string, schemaName?: string) => {
+    set({ error: null });
+    try {
+      await deleteTableOverride(envName, tableName, schemaName);
+      if (get().activeEnvironment === envName) {
+        await get().fetchTableOverrides();
+      }
+    } catch (err) {
+      set({ error: (err as Error).message });
+      throw err;
+    }
   },
 
   managementPanelOpen: false,

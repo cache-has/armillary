@@ -141,6 +141,106 @@
   font-size: 11px;
 }
 
+/* Overrides toggle button (clickable count) */
+.env-panel__overrides-toggle {
+  background: none;
+  border: none;
+  font-size: 11px;
+  color: var(--text, #6b6375);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: inherit;
+}
+
+.env-panel__overrides-toggle:hover {
+  color: var(--accent, #a855f7);
+}
+
+.env-panel__overrides-chevron {
+  font-size: 10px;
+}
+
+/* Overrides expanded section */
+.env-panel__overrides {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #e5e4e7);
+}
+
+.env-panel__overrides-loading,
+.env-panel__overrides-empty {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+  padding: 4px 0;
+}
+
+.env-panel__overrides-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.env-panel__override-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.env-panel__override-item + .env-panel__override-item {
+  border-top: 1px solid var(--border, #e5e4e7);
+}
+
+.env-panel__override-name {
+  font-family: var(--mono, 'SF Mono', monospace);
+  font-size: 12px;
+  color: var(--text-h, #08060d);
+}
+
+/* Create override inline form */
+.env-panel__override-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border, #e5e4e7);
+}
+
+.env-panel__override-select {
+  flex: 1;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  font-family: inherit;
+}
+
+.env-panel__override-add-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--accent, #a855f7);
+  border-radius: 4px;
+  background: var(--accent, #a855f7);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.env-panel__override-add-btn:hover {
+  background: #9333ea;
+}
+
+.env-panel__override-add-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Fallback editor inline */
 .env-panel__fallback-editor {
   display: flex;
