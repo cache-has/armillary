@@ -141,8 +141,8 @@ fn stop(format: OutputFormat) -> Result<()> {
     let lock_path =
         flux_server::lockfile::default_path().context("could not determine lockfile path")?;
 
-    let info = flux_server::lockfile::check_existing(&lock_path)
-        .context("failed to read lockfile")?;
+    let info =
+        flux_server::lockfile::check_existing(&lock_path).context("failed to read lockfile")?;
 
     match info {
         Some(instance) => {
@@ -166,17 +166,15 @@ fn stop(format: OutputFormat) -> Result<()> {
                 }
             }
         }
-        None => {
-            match format {
-                OutputFormat::Human => {
-                    println!("No running Horizon Flux server found.");
-                }
-                OutputFormat::Json => {
-                    let out = serde_json::json!({ "stopped": false, "reason": "not running" });
-                    println!("{}", serde_json::to_string_pretty(&out)?);
-                }
+        None => match format {
+            OutputFormat::Human => {
+                println!("No running Horizon Flux server found.");
             }
-        }
+            OutputFormat::Json => {
+                let out = serde_json::json!({ "stopped": false, "reason": "not running" });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            }
+        },
     }
     Ok(())
 }
@@ -185,8 +183,8 @@ fn status(format: OutputFormat) -> Result<()> {
     let lock_path =
         flux_server::lockfile::default_path().context("could not determine lockfile path")?;
 
-    let info = flux_server::lockfile::check_existing(&lock_path)
-        .context("failed to read lockfile")?;
+    let info =
+        flux_server::lockfile::check_existing(&lock_path).context("failed to read lockfile")?;
 
     let output = match info {
         Some(instance) => StatusOutput {

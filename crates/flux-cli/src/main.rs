@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+mod pipeline;
 mod secret;
 mod server;
 
@@ -78,6 +79,43 @@ enum Command {
         #[arg(long, default_value = "reject")]
         on_conflict: String,
     },
+    /// Execute a pipeline.
+    Run {
+        /// Pipeline name or UUID.
+        pipeline: String,
+        /// Environment to execute in (e.g., dev, prod).
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Variable overrides in key=value format (repeatable).
+        #[arg(long, short = 'V', value_parser = pipeline::parse_var)]
+        var: Vec<(String, String)>,
+        /// Validate the pipeline without executing it.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List all pipelines.
+    List,
+    /// Show pipeline details (nodes, connections, variables).
+    Show {
+        /// Pipeline name or UUID.
+        pipeline: String,
+    },
+    /// Show execution history for a pipeline.
+    History {
+        /// Pipeline name or UUID.
+        pipeline: String,
+        /// Maximum number of runs to show.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Run a preview and output sample data to stdout.
+    Preview {
+        /// Pipeline name or UUID.
+        pipeline: String,
+        /// Variable overrides in key=value format (repeatable).
+        #[arg(long, short = 'V', value_parser = pipeline::parse_var)]
+        var: Vec<(String, String)>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -112,25 +150,32 @@ fn run(cli: Cli, format: OutputFormat) -> Result<()> {
             dev,
         }) => server::start(port, headless, dev),
 
-        Some(Command::Stop) => {
-            server::handle(server::ServerAction::Stop, format)
-        }
+        Some(Command::Stop) => server::handle(server::ServerAction::Stop, format),
 
-        Some(Command::Status) => {
-            server::handle(server::ServerAction::Status, format)
-        }
+        Some(Command::Status) => server::handle(server::ServerAction::Status, format),
 
-        Some(Command::Secret { action }) => {
-            secret::handle(action).context("secret command failed")
-        }
+        Some(Command::Secret { action }) => secret::handle(action).context("secret command failed"),
 
         Some(Command::Export { pipeline, output }) => {
             export_pipeline(&pipeline, output.as_deref(), format)
         }
 
-        Some(Command::Import { file, on_conflict }) => {
-            import_pipeline(&file, &on_conflict, format)
-        }
+        Some(Command::Import { file, on_conflict }) => import_pipeline(&file, &on_conflict, format),
+
+        Some(Command::Run {
+            pipeline,
+            env,
+            var,
+            dry_run,
+        }) => pipeline::run(&pipeline, env.as_deref(), var, dry_run, format),
+
+        Some(Command::List) => pipeline::list(format),
+
+        Some(Command::Show { pipeline }) => pipeline::show(&pipeline, format),
+
+        Some(Command::History { pipeline, limit }) => pipeline::history(&pipeline, limit, format),
+
+        Some(Command::Preview { pipeline, var }) => pipeline::preview(&pipeline, var, format),
     }
 }
 
@@ -143,16 +188,12 @@ fn export_pipeline(
         .context("could not determine home directory")?
         .join(".horizon-flux");
     let pipelines_dir = data_dir.join("pipelines");
-    let pipeline_store = flux_engine::PipelineStore::open(
-        &data_dir.join("pipelines.db"),
-        &pipelines_dir,
-    )
-    .context("failed to open pipeline store")?;
+    let pipeline_store =
+        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
+            .context("failed to open pipeline store")?;
 
     let record = if let Ok(id) = pipeline.parse::<flux_engine::PipelineId>() {
-        pipeline_store
-            .get(&id)
-            .context("failed to read pipeline")?
+        pipeline_store.get(&id).context("failed to read pipeline")?
     } else {
         pipeline_store
             .get_by_name(pipeline)
@@ -205,21 +246,15 @@ fn export_pipeline(
     Ok(())
 }
 
-fn import_pipeline(
-    file: &std::path::Path,
-    on_conflict: &str,
-    format: OutputFormat,
-) -> Result<()> {
+fn import_pipeline(file: &std::path::Path, on_conflict: &str, format: OutputFormat) -> Result<()> {
     let data_dir = dirs::home_dir()
         .context("could not determine home directory")?
         .join(".horizon-flux");
     let pipelines_dir = data_dir.join("pipelines");
     std::fs::create_dir_all(&data_dir).context("failed to create data directory")?;
-    let pipeline_store = flux_engine::PipelineStore::open(
-        &data_dir.join("pipelines.db"),
-        &pipelines_dir,
-    )
-    .context("failed to open pipeline store")?;
+    let pipeline_store =
+        flux_engine::PipelineStore::open(&data_dir.join("pipelines.db"), &pipelines_dir)
+            .context("failed to open pipeline store")?;
 
     let json = std::fs::read_to_string(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
@@ -316,12 +351,9 @@ mod tests {
     #[test]
     fn parse_start_with_flags() {
         let cli =
-            Cli::try_parse_from(["horizon-flux", "start", "--port", "9090", "--headless"])
-                .unwrap();
+            Cli::try_parse_from(["horizon-flux", "start", "--port", "9090", "--headless"]).unwrap();
         match cli.command {
-            Some(Command::Start {
-                port, headless, ..
-            }) => {
+            Some(Command::Start { port, headless, .. }) => {
                 assert_eq!(port, 9090);
                 assert!(headless);
             }
@@ -357,14 +389,8 @@ mod tests {
 
     #[test]
     fn parse_export() {
-        let cli = Cli::try_parse_from([
-            "horizon-flux",
-            "export",
-            "my-pipeline",
-            "-o",
-            "out.json",
-        ])
-        .unwrap();
+        let cli = Cli::try_parse_from(["horizon-flux", "export", "my-pipeline", "-o", "out.json"])
+            .unwrap();
         match cli.command {
             Some(Command::Export { pipeline, output }) => {
                 assert_eq!(pipeline, "my-pipeline");
@@ -398,5 +424,118 @@ mod tests {
     #[test]
     fn exit_code_constants() {
         assert_eq!(EXIT_PIPELINE_FAILURE, 2);
+    }
+
+    #[test]
+    fn parse_run_minimal() {
+        let cli = Cli::try_parse_from(["horizon-flux", "run", "my-pipe"]).unwrap();
+        match cli.command {
+            Some(Command::Run {
+                pipeline,
+                env,
+                var,
+                dry_run,
+            }) => {
+                assert_eq!(pipeline, "my-pipe");
+                assert!(env.is_none());
+                assert!(var.is_empty());
+                assert!(!dry_run);
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn parse_run_full() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "run",
+            "etl",
+            "--env",
+            "prod",
+            "-V",
+            "date=2026-03-28",
+            "-V",
+            "region=midwest",
+            "--dry-run",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Run {
+                pipeline,
+                env,
+                var,
+                dry_run,
+            }) => {
+                assert_eq!(pipeline, "etl");
+                assert_eq!(env.as_deref(), Some("prod"));
+                assert_eq!(var.len(), 2);
+                assert_eq!(var[0], ("date".into(), "2026-03-28".into()));
+                assert_eq!(var[1], ("region".into(), "midwest".into()));
+                assert!(dry_run);
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn parse_list() {
+        let cli = Cli::try_parse_from(["horizon-flux", "list"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::List)));
+    }
+
+    #[test]
+    fn parse_show() {
+        let cli = Cli::try_parse_from(["horizon-flux", "show", "my-pipe"]).unwrap();
+        match cli.command {
+            Some(Command::Show { pipeline }) => {
+                assert_eq!(pipeline, "my-pipe");
+            }
+            _ => panic!("expected Show"),
+        }
+    }
+
+    #[test]
+    fn parse_history() {
+        let cli =
+            Cli::try_parse_from(["horizon-flux", "history", "my-pipe", "--limit", "50"]).unwrap();
+        match cli.command {
+            Some(Command::History { pipeline, limit }) => {
+                assert_eq!(pipeline, "my-pipe");
+                assert_eq!(limit, 50);
+            }
+            _ => panic!("expected History"),
+        }
+    }
+
+    #[test]
+    fn parse_history_default_limit() {
+        let cli = Cli::try_parse_from(["horizon-flux", "history", "my-pipe"]).unwrap();
+        match cli.command {
+            Some(Command::History { limit, .. }) => {
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected History"),
+        }
+    }
+
+    #[test]
+    fn parse_preview() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "preview",
+            "my-pipe",
+            "-V",
+            "date=2026-03-28",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Preview { pipeline, var }) => {
+                assert_eq!(pipeline, "my-pipe");
+                assert_eq!(var.len(), 1);
+                assert_eq!(var[0], ("date".into(), "2026-03-28".into()));
+            }
+            _ => panic!("expected Preview"),
+        }
     }
 }
