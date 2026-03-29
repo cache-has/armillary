@@ -321,3 +321,77 @@ impl EnvironmentStore {
         Ok(overrides)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> EnvironmentStore {
+        EnvironmentStore::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn update_fallback_changes_chain() {
+        let store = test_store();
+        // Default: dev -> prod
+        let chain = store.fallback_chain("dev").unwrap();
+        assert_eq!(chain, vec!["dev", "prod"]);
+
+        // Create staging -> prod, then point dev -> staging
+        store.create("staging", Some("prod")).unwrap();
+        store.update_fallback("dev", Some("staging")).unwrap();
+
+        let chain = store.fallback_chain("dev").unwrap();
+        assert_eq!(chain, vec!["dev", "staging", "prod"]);
+    }
+
+    #[test]
+    fn update_fallback_to_none() {
+        let store = test_store();
+        store.update_fallback("dev", None).unwrap();
+        let chain = store.fallback_chain("dev").unwrap();
+        assert_eq!(chain, vec!["dev"]);
+    }
+
+    #[test]
+    fn update_fallback_prod_rejected() {
+        let store = test_store();
+        let err = store.update_fallback("prod", Some("dev")).unwrap_err();
+        assert!(matches!(err, EnvironmentError::ProdCannotHaveFallback));
+    }
+
+    #[test]
+    fn update_fallback_cyclic_rejected() {
+        let store = test_store();
+        let err = store.update_fallback("dev", Some("dev")).unwrap_err();
+        assert!(matches!(err, EnvironmentError::CyclicFallback));
+    }
+
+    #[test]
+    fn update_fallback_not_found() {
+        let store = test_store();
+        let err = store
+            .update_fallback("dev", Some("nonexistent"))
+            .unwrap_err();
+        assert!(matches!(err, EnvironmentError::FallbackNotFound(_)));
+    }
+
+    #[test]
+    fn create_and_delete_environment() {
+        let store = test_store();
+        store.create("staging", Some("prod")).unwrap();
+        let envs = store.list().unwrap();
+        assert_eq!(envs.len(), 3);
+
+        store.delete("staging").unwrap();
+        let envs = store.list().unwrap();
+        assert_eq!(envs.len(), 2);
+    }
+
+    #[test]
+    fn cannot_delete_prod() {
+        let store = test_store();
+        let err = store.delete("prod").unwrap_err();
+        assert!(matches!(err, EnvironmentError::CannotDeleteProd));
+    }
+}

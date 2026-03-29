@@ -38,6 +38,7 @@ import type { PaletteItem } from './NodePalette';
 import { SidePanel } from './SidePanel';
 import { NodeEditorModal } from './NodeEditorModal';
 import { EnvironmentSelector } from './EnvironmentSelector';
+import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineCanvas.css';
 
@@ -584,6 +585,7 @@ function PipelineCanvasInner() {
       />
 
       <SidePanel />
+      <EnvironmentManagementPanel />
       <NodeEditorModal />
     </div>
   );

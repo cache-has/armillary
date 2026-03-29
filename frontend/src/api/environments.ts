@@ -61,6 +61,23 @@ export async function deleteEnvironment(name: string): Promise<void> {
   }
 }
 
+/** Update an environment's fallback chain. */
+export async function updateEnvironment(
+  name: string,
+  fallback: string | null,
+): Promise<ApiEnvironment> {
+  const res = await fetch(`${BASE}/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fallback }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Failed to update environment: ${res.status}`);
+  }
+  return res.json();
+}
+
 /** List table overrides for an environment. */
 export async function listTableOverrides(
   envName: string,

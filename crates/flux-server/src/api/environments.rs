@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_environments).post(create_environment))
-        .route("/{name}", delete(delete_environment))
+        .route("/{name}", delete(delete_environment).put(update_environment))
         .route("/{name}/tables", get(list_table_overrides))
         .route(
             "/{name}/tables/{table}/override",
@@ -39,6 +39,11 @@ struct EnvironmentResponse {
 #[derive(Debug, Deserialize)]
 struct CreateEnvironmentRequest {
     name: String,
+    fallback: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateEnvironmentRequest {
     fallback: Option<String>,
 }
 
@@ -136,6 +141,43 @@ async fn delete_environment(
         })?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `PUT /api/environments/:name` — update an environment's fallback chain.
+async fn update_environment(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateEnvironmentRequest>,
+) -> Result<Json<EnvironmentResponse>, (StatusCode, Json<ApiError>)> {
+    // Verify environment exists.
+    let env = state
+        .environment_store
+        .get(&name)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("environment", &name))?;
+
+    state
+        .environment_store
+        .update_fallback(&name, req.fallback.as_deref())
+        .map_err(|e| match &e {
+            EnvironmentError::ProdCannotHaveFallback => ApiError::bad_request(e.to_string()),
+            EnvironmentError::FallbackNotFound(_) => ApiError::bad_request(e.to_string()),
+            EnvironmentError::CyclicFallback => ApiError::bad_request(e.to_string()),
+            EnvironmentError::NotFound(_) => ApiError::not_found("environment", &name),
+            _ => ApiError::internal(e.to_string()),
+        })?;
+
+    // Return updated environment.
+    let updated = state
+        .environment_store
+        .get(&name)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .unwrap_or(env);
+
+    Ok(Json(EnvironmentResponse {
+        name: updated.name,
+        fallback: updated.fallback,
+    }))
 }
 
 /// `GET /api/environments/:name/tables` — list table overrides in an environment.

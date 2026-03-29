@@ -102,3 +102,26 @@
   color: var(--text, #6b6375);
   text-align: center;
 }
+
+.env-selector__divider {
+  height: 1px;
+  background: var(--border, #e5e4e7);
+  margin: 4px 0;
+}
+
+.env-selector__manage {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-family: var(--sans, system-ui, sans-serif);
+  border: none;
+  background: transparent;
+  color: var(--accent, #a855f7);
+  cursor: pointer;
+  text-align: left;
+}
+
+.env-selector__manage:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+}

@@ -5,6 +5,9 @@ import { create } from 'zustand';
 import {
   listEnvironments,
   listTableOverrides,
+  createEnvironment,
+  deleteEnvironment,
+  updateEnvironment,
   type ApiEnvironment,
   type ApiTableOverride,
 } from '../api/environments';
@@ -31,6 +34,16 @@ export interface EnvironmentStoreActions {
   fetchTableOverrides: () => Promise<void>;
   /** Check if a node (by table name) has an override in the active environment. */
   hasOverride: (tableName: string) => boolean;
+  /** Create a new environment and refresh the list. */
+  addEnvironment: (name: string, fallback?: string) => Promise<void>;
+  /** Delete an environment and refresh the list. */
+  removeEnvironment: (name: string) => Promise<void>;
+  /** Update an environment's fallback and refresh the list. */
+  updateFallback: (name: string, fallback: string | null) => Promise<void>;
+  /** Whether the environment management panel is open. */
+  managementPanelOpen: boolean;
+  /** Toggle the management panel. */
+  setManagementPanelOpen: (open: boolean) => void;
 }
 
 export type EnvironmentStore = EnvironmentStoreState & EnvironmentStoreActions;
@@ -69,5 +82,48 @@ export const useEnvironmentStore = create<EnvironmentStore>((set, get) => ({
 
   hasOverride: (tableName: string) => {
     return get().tableOverrides.some((o) => o.table_name === tableName);
+  },
+
+  managementPanelOpen: false,
+
+  setManagementPanelOpen: (open: boolean) => {
+    set({ managementPanelOpen: open });
+  },
+
+  addEnvironment: async (name: string, fallback?: string) => {
+    set({ error: null });
+    try {
+      await createEnvironment(name, fallback);
+      await get().fetchEnvironments();
+    } catch (err) {
+      set({ error: (err as Error).message });
+      throw err;
+    }
+  },
+
+  removeEnvironment: async (name: string) => {
+    set({ error: null });
+    try {
+      await deleteEnvironment(name);
+      await get().fetchEnvironments();
+      // If the deleted environment was active, switch to prod
+      if (get().activeEnvironment === name) {
+        await get().setActiveEnvironment('prod');
+      }
+    } catch (err) {
+      set({ error: (err as Error).message });
+      throw err;
+    }
+  },
+
+  updateFallback: async (name: string, fallback: string | null) => {
+    set({ error: null });
+    try {
+      await updateEnvironment(name, fallback);
+      await get().fetchEnvironments();
+    } catch (err) {
+      set({ error: (err as Error).message });
+      throw err;
+    }
   },
 }));

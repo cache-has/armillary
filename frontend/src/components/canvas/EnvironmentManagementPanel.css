@@ -1,0 +1,275 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.env-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 380px;
+  height: 100%;
+  background: var(--bg, #fff);
+  border-left: 1px solid var(--border, #e5e4e7);
+  box-shadow: var(--shadow);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(100%);
+  transition: transform 0.2s ease-out;
+  font-family: var(--sans, system-ui, sans-serif);
+}
+
+.env-panel--open {
+  transform: translateX(0);
+}
+
+/* Header */
+.env-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border, #e5e4e7);
+  flex-shrink: 0;
+}
+
+.env-panel__title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h, #08060d);
+  margin: 0;
+}
+
+.env-panel__close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text, #6b6375);
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.env-panel__close:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+}
+
+/* Body */
+.env-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+/* Environment list */
+.env-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.env-panel__item {
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: var(--bg, #fff);
+}
+
+.env-panel__item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.env-panel__item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.env-panel__item-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-h, #08060d);
+  flex: 1;
+}
+
+.env-panel__item-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.env-panel__item-btn {
+  background: none;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text, #6b6375);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.env-panel__item-btn:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+  color: var(--text-h, #08060d);
+}
+
+.env-panel__item-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.env-panel__item-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text, #6b6375);
+}
+
+.env-panel__chain {
+  font-family: var(--mono, 'SF Mono', monospace);
+  font-size: 11px;
+}
+
+.env-panel__overrides-count {
+  font-size: 11px;
+}
+
+/* Fallback editor inline */
+.env-panel__fallback-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #e5e4e7);
+}
+
+.env-panel__fallback-editor label {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+  white-space: nowrap;
+}
+
+.env-panel__fallback-select {
+  flex: 1;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  font-family: inherit;
+}
+
+.env-panel__fallback-save {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--accent, #a855f7);
+  border-radius: 4px;
+  background: var(--accent, #a855f7);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.env-panel__fallback-save:hover {
+  background: #9333ea;
+}
+
+.env-panel__fallback-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Create form */
+.env-panel__create {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #e5e4e7);
+}
+
+.env-panel__create-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h, #08060d);
+  margin: 0 0 8px;
+}
+
+.env-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.env-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.env-panel__field label {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+}
+
+.env-panel__field input,
+.env-panel__field select {
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  background: var(--bg, #fff);
+  font-family: inherit;
+}
+
+.env-panel__field input:focus,
+.env-panel__field select:focus {
+  outline: none;
+  border-color: var(--accent, #a855f7);
+  box-shadow: 0 0 0 1px var(--accent-bg, rgba(170, 59, 255, 0.1));
+}
+
+.env-panel__create-btn {
+  align-self: flex-start;
+  font-size: 13px;
+  padding: 5px 14px;
+  border: 1px solid var(--accent, #a855f7);
+  border-radius: 4px;
+  background: var(--accent, #a855f7);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.env-panel__create-btn:hover {
+  background: #9333ea;
+}
+
+.env-panel__create-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Error */
+.env-panel__error {
+  font-size: 12px;
+  color: #ef4444;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.08);
+  margin-bottom: 8px;
+}
+
+/* Empty */
+.env-panel__empty {
+  font-size: 13px;
+  color: var(--text, #6b6375);
+  text-align: center;
+  padding: 20px 0;
+}

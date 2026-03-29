@@ -24,6 +24,7 @@ export function EnvironmentSelector() {
   const loading = useEnvironmentStore((s) => s.loading);
   const fetchEnvironments = useEnvironmentStore((s) => s.fetchEnvironments);
   const setActiveEnvironment = useEnvironmentStore((s) => s.setActiveEnvironment);
+  const setManagementPanelOpen = useEnvironmentStore((s) => s.setManagementPanelOpen);
 
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -99,6 +100,16 @@ export function EnvironmentSelector() {
           {environments.length === 0 && !loading && (
             <div className="env-selector__empty">No environments</div>
           )}
+          <div className="env-selector__divider" />
+          <button
+            className="env-selector__manage"
+            onClick={() => {
+              setOpen(false);
+              setManagementPanelOpen(true);
+            }}
+          >
+            Manage Environments
+          </button>
         </div>
       )}
     </div>
