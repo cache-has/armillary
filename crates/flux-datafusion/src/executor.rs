@@ -185,40 +185,52 @@ impl PipelineExecutor {
                     Self::execute_source(node_id, &interpolated_cfg, registry).await
                 }
 
-                NodeKind::Transform(xform_cfg) => match xform_cfg.mode {
-                    TransformMode::Sql => {
-                        let upstream_ids = pipeline.upstream_of(node_id);
-                        match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
-                            Ok(data) => {
-                                // Interpolate variables in SQL code.
-                                let interpolated_sql =
-                                    resolved_vars.interpolate(&xform_cfg.code);
-                                Self::execute_sql_transform(
-                                    &interpolated_sql,
-                                    data,
-                                    options.environment_resolver.as_ref(),
-                                )
-                                .await
+                NodeKind::Transform(xform_cfg) => {
+                    // Resolve code from file or inline.
+                    let code = pipeline.resolve_code(xform_cfg).map_err(|e| {
+                        NodeErrorKind::CodeFileRead {
+                            path: xform_cfg
+                                .code_path
+                                .clone()
+                                .unwrap_or_else(|| "(inline)".into()),
+                            source: e,
+                        }
+                    });
+                    match code {
+                        Err(e) => Err(e),
+                        Ok(code) => match xform_cfg.mode {
+                        TransformMode::Sql => {
+                            let upstream_ids = pipeline.upstream_of(node_id);
+                            match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                                Ok(data) => {
+                                    let interpolated_sql = resolved_vars.interpolate(&code);
+                                    Self::execute_sql_transform(
+                                        &interpolated_sql,
+                                        data,
+                                        options.environment_resolver.as_ref(),
+                                    )
+                                    .await
+                                }
+                                Err(e) => Err(e),
                             }
-                            Err(e) => Err(e),
+                        }
+                        TransformMode::Python => {
+                            let upstream_ids = pipeline.upstream_of(node_id);
+                            match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                                Ok(data) => {
+                                    crate::python_runtime::execute_python_transform(
+                                        &code,
+                                        data,
+                                        resolved_vars.as_map(),
+                                    )
+                                    .await
+                                }
+                                Err(e) => Err(e),
+                            }
                         }
                     }
-                    TransformMode::Python => {
-                        let upstream_ids = pipeline.upstream_of(node_id);
-                        match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
-                            Ok(data) => {
-                                // Pass all resolved variables to Python (not just defaults).
-                                crate::python_runtime::execute_python_transform(
-                                    &xform_cfg.code,
-                                    data,
-                                    resolved_vars.as_map(),
-                                )
-                                .await
-                            }
-                            Err(e) => Err(e),
-                        }
                     }
-                },
+                }
 
                 NodeKind::Sink(sink_cfg) => {
                     let upstream_ids = pipeline.upstream_of(node_id);

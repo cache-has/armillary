@@ -116,6 +116,11 @@ pub struct PostgreSqlConfig {
     /// Conflict key columns for upsert mode (used in ON CONFLICT).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conflict_keys: Vec<String>,
+    /// Indexes to create after writing. Each entry is a list of column names
+    /// that form a single index. Example: `[["customer_id"], ["region", "tier"]]`
+    /// creates two indexes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<Vec<String>>,
 }
 
 /// PostgreSQL sink write modes.

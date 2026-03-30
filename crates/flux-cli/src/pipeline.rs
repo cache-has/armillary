@@ -170,13 +170,17 @@ pub fn run(
         .unwrap_or_else(|| record.pipeline.default_environment.clone());
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-    rt.block_on(execute_pipeline(
+    let result = rt.block_on(execute_pipeline(
         &record,
         &stores,
         environment,
         variable_overrides,
         format,
-    ))
+    ));
+    // Force-shutdown the runtime — background tasks (tokio-postgres connections,
+    // etc.) can keep the process alive indefinitely otherwise.
+    rt.shutdown_background();
+    result
 }
 
 async fn execute_pipeline(
@@ -212,6 +216,9 @@ async fn execute_pipeline(
     let result =
         flux_datafusion::PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)
             .await;
+
+    // Drop the progress sender so the receiver loop terminates.
+    drop(options);
 
     // Wait for progress printer to finish.
     let _ = progress_handle.await;
@@ -512,12 +519,14 @@ pub fn preview(
     let variable_overrides = vars_to_map(vars);
 
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-    rt.block_on(execute_preview(
+    let result = rt.block_on(execute_preview(
         &record,
         &stores,
         variable_overrides,
         format,
-    ))
+    ));
+    rt.shutdown_background();
+    result
 }
 
 async fn execute_preview(

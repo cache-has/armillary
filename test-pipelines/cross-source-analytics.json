@@ -16,7 +16,7 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "query": "SELECT c.customer_id, c.first_name, c.last_name, c.email, c.active, c.create_date, ci.city, co.country FROM customer c JOIN address a ON c.address_id = a.address_id JOIN city ci ON a.city_id = ci.city_id JOIN country co ON ci.country_id = co.country_id"
       },
       "position": {
@@ -31,7 +31,7 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "query": "SELECT r.customer_id, COUNT(r.rental_id) AS rental_count, COALESCE(SUM(p.amount), 0) AS total_spent, MIN(r.rental_date) AS first_rental, MAX(r.rental_date) AS last_rental FROM rental r LEFT JOIN payment_p2022_01 p ON r.rental_id = p.rental_id GROUP BY r.customer_id"
       },
       "position": {
@@ -106,26 +106,28 @@
       "name": "Parse Earthquake Data (Python)",
       "type": "transform",
       "mode": "python",
-      "code": "import polars as pl\nimport json\n\n\ndef transform(inputs, params):\n    df = inputs[\"earthquakes\"]\n\n    # The REST connector serializes nested JSON objects as strings.\n    # Parse properties and geometry from JSON strings.\n    rows = df.to_dicts()\n    parsed = []\n    for row in rows:\n        props = json.loads(row[\"properties\"]) if isinstance(row[\"properties\"], str) else row[\"properties\"]\n        geom = json.loads(row[\"geometry\"]) if isinstance(row[\"geometry\"], str) else row[\"geometry\"]\n        coords = geom.get(\"coordinates\", [0, 0, 0])\n        parsed.append({\n            \"eq_id\": str(row.get(\"id\", \"\")),\n            \"magnitude\": float(props.get(\"mag\", 0)),\n            \"place\": str(props.get(\"place\", \"unknown\")),\n            \"event_type\": str(props.get(\"type\", \"earthquake\")),\n            \"tsunami\": int(props.get(\"tsunami\", 0)),\n            \"longitude\": float(coords[0]) if len(coords) > 0 else 0.0,\n            \"latitude\": float(coords[1]) if len(coords) > 1 else 0.0,\n            \"depth_km\": float(coords[2]) if len(coords) > 2 else 0.0,\n        })\n\n    result = pl.DataFrame(parsed)\n\n    # Filter by minimum magnitude from pipeline variables\n    min_mag = float(params.get(\"min_magnitude\", 2.5))\n    result = result.filter(pl.col(\"magnitude\") >= min_mag)\n\n    return result\n",
+      "code": "",
       "materialized": true,
       "position": {
         "x": 400,
         "y": 450
       },
-      "pinned_position": false
+      "pinned_position": false,
+      "code_path": "silver/usgs/parse_earthquakes.py"
     },
     {
       "id": "parse_countries",
       "name": "Parse Country API (Python)",
       "type": "transform",
       "mode": "python",
-      "code": "import polars as pl\nimport json\n\n\ndef transform(inputs, params):\n    df = inputs[\"rest_countries\"]\n\n    # The REST connector serializes nested JSON objects as strings.\n    # Parse each row's nested fields.\n    rows = df.to_dicts()\n    parsed = []\n    for row in rows:\n        name = row.get(\"name\", \"\")\n        if isinstance(name, str):\n            try:\n                name = json.loads(name)\n            except (json.JSONDecodeError, TypeError):\n                pass\n        country_name = name.get(\"common\", str(name)) if isinstance(name, dict) else str(name)\n\n        latlng = row.get(\"latlng\", \"[]\")\n        if isinstance(latlng, str):\n            try:\n                latlng = json.loads(latlng)\n            except (json.JSONDecodeError, TypeError):\n                latlng = [0, 0]\n        if not isinstance(latlng, list):\n            latlng = [0, 0]\n\n        area = float(row.get(\"area\", 0) or 0)\n        pop = int(row.get(\"population\", 0) or 0)\n\n        parsed.append({\n            \"country_name\": country_name,\n            \"region\": str(row.get(\"region\", \"Unknown\")),\n            \"subregion\": str(row.get(\"subregion\", \"Unknown\")),\n            \"population\": pop,\n            \"area\": area,\n            \"lat\": float(latlng[0]) if len(latlng) > 0 else 0.0,\n            \"lng\": float(latlng[1]) if len(latlng) > 1 else 0.0,\n        })\n\n    result = pl.DataFrame(parsed)\n\n    # Population density\n    result = result.with_columns(\n        (pl.col(\"population\") / pl.col(\"area\")).round(2).alias(\"pop_density_per_km2\")\n    ).filter(pl.col(\"area\") > 0)\n\n    return result\n",
+      "code": "",
       "materialized": false,
       "position": {
         "x": 400,
         "y": 950
       },
-      "pinned_position": false
+      "pinned_position": false,
+      "code_path": "silver/geo/parse_countries.py"
     },
     {
       "id": "enrich_customers",
@@ -158,13 +160,14 @@
       "name": "RFM Scoring (Python)",
       "type": "transform",
       "mode": "python",
-      "code": "import polars as pl\n\n\ndef transform(inputs, params):\n    df = inputs[\"enrich_customers\"]\n\n    # Compute RFM scores (Frequency + Monetary \u2014 Recency omitted since\n    # we don't have a reference \"now\" date in the dataset).\n    df = df.with_columns([\n        pl.col(\"rental_count\").cast(pl.Float64).alias(\"frequency\"),\n        pl.col(\"total_spent\").cast(pl.Float64).alias(\"monetary\"),\n    ])\n\n    # Rank into quintiles (1-5)\n    df = df.with_columns([\n        (pl.col(\"frequency\").rank(\"ordinal\") / pl.col(\"frequency\").count() * 5)\n            .cast(pl.Int32).clip(1, 5).alias(\"f_score\"),\n        (pl.col(\"monetary\").rank(\"ordinal\") / pl.col(\"monetary\").count() * 5)\n            .cast(pl.Int32).clip(1, 5).alias(\"m_score\"),\n    ])\n\n    # Combined score and segment label\n    df = df.with_columns(\n        (pl.col(\"f_score\") + pl.col(\"m_score\")).alias(\"rfm_score\")\n    )\n\n    df = df.with_columns(\n        pl.when(pl.col(\"rfm_score\") >= 9)\n            .then(pl.lit(\"Champion\"))\n            .when(pl.col(\"rfm_score\") >= 7)\n            .then(pl.lit(\"Loyal\"))\n            .when(pl.col(\"rfm_score\") >= 5)\n            .then(pl.lit(\"Potential\"))\n            .when(pl.col(\"rfm_score\") >= 3)\n            .then(pl.lit(\"At Risk\"))\n            .otherwise(pl.lit(\"Dormant\"))\n            .alias(\"segment\")\n    )\n\n    return df\n",
+      "code": "",
       "materialized": true,
       "position": {
         "x": 1200,
         "y": 200
       },
-      "pinned_position": false
+      "pinned_position": false,
+      "code_path": "gold/customer/rfm_scoring.py"
     },
     {
       "id": "seismic_summary",
@@ -254,6 +257,134 @@
         "y": 900
       },
       "pinned_position": false
+    },
+    {
+      "id": "sink_profiles_pg",
+      "name": "Profiles to PostgreSQL",
+      "type": "sink",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "{{ env:OUTPUT_CONNECTION }}",
+        "table": "customer_profiles",
+        "write_mode": "truncate_insert",
+        "batch_size": 500,
+        "indexes": [
+          [
+            "customer_id"
+          ],
+          [
+            "country"
+          ],
+          [
+            "tier"
+          ]
+        ]
+      },
+      "position": {
+        "x": 800,
+        "y": 0
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_enriched_pg",
+      "name": "Enriched Customers to PostgreSQL",
+      "type": "sink",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "{{ env:OUTPUT_CONNECTION }}",
+        "table": "enriched_customers",
+        "write_mode": "truncate_insert",
+        "batch_size": 500,
+        "indexes": [
+          [
+            "customer_id"
+          ],
+          [
+            "econ_region",
+            "tier"
+          ],
+          [
+            "country"
+          ]
+        ]
+      },
+      "position": {
+        "x": 1200,
+        "y": 0
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_earthquakes_pg",
+      "name": "Earthquake Matches to PostgreSQL",
+      "type": "sink",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "{{ env:OUTPUT_CONNECTION }}",
+        "table": "earthquake_country_matches",
+        "write_mode": "truncate_insert",
+        "batch_size": 1000,
+        "indexes": [
+          [
+            "world_region"
+          ],
+          [
+            "nearest_country"
+          ],
+          [
+            "magnitude"
+          ]
+        ]
+      },
+      "position": {
+        "x": 1200,
+        "y": 800
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_rfm_pg",
+      "name": "RFM Scores to PostgreSQL",
+      "type": "sink",
+      "connector": "postgresql",
+      "config": {
+        "connection_string": "{{ env:OUTPUT_CONNECTION }}",
+        "table": "customer_rfm_scores",
+        "write_mode": "truncate_insert",
+        "batch_size": 500,
+        "indexes": [
+          [
+            "customer_id"
+          ],
+          [
+            "segment"
+          ],
+          [
+            "rfm_score"
+          ]
+        ]
+      },
+      "position": {
+        "x": 1600,
+        "y": 400
+      },
+      "pinned_position": false
+    },
+    {
+      "id": "sink_parsed_eq_csv",
+      "name": "Parsed Earthquakes (CSV)",
+      "type": "sink",
+      "connector": "csv",
+      "config": {
+        "path": "output/parsed_earthquakes.csv",
+        "format": "csv"
+      },
+      "position": {
+        "x": 800,
+        "y": 550
+      },
+      "pinned_position": false
     }
   ],
   "edges": [
@@ -316,6 +447,27 @@
     {
       "from": "earthquake_country_join",
       "to": "sink_earthquakes_csv"
+    },
+    {
+      "from": "customer_profiles",
+      "to": "sink_profiles_pg"
+    },
+    {
+      "from": "enrich_customers",
+      "to": "sink_enriched_pg"
+    },
+    {
+      "from": "earthquake_country_join",
+      "to": "sink_earthquakes_pg"
+    },
+    {
+      "from": "customer_rfm",
+      "to": "sink_rfm_pg"
+    },
+    {
+      "from": "parse_earthquakes",
+      "to": "sink_parsed_eq_csv"
     }
-  ]
+  ],
+  "code_dir": "test-pipelines/transforms"
 }

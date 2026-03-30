@@ -76,6 +76,7 @@ rpassword = "7"
 
 # Filesystem
 dirs = "6"
+dotenvy = "0.15"
 
 # Browser
 open = "5"

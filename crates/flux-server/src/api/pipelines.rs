@@ -586,8 +586,13 @@ async fn export_pipeline(
         .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
 
-    let json = record
+    // Resolve code_path references to inline code so the export is self-contained.
+    let export_pipeline = record
         .pipeline
+        .with_resolved_code()
+        .map_err(|e| ApiError::internal(format!("failed to resolve code files: {e}")))?;
+
+    let json = export_pipeline
         .to_json()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -721,10 +726,14 @@ async fn bulk_export(
         .list(total, 0)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    // Build a map of pipeline name -> definition.
+    // Build a map of pipeline name -> definition (with code_path resolved).
     let mut export: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
     for record in &records {
-        let value = serde_json::to_value(&record.pipeline)
+        let resolved = record
+            .pipeline
+            .with_resolved_code()
+            .map_err(|e| ApiError::internal(format!("failed to resolve code files: {e}")))?;
+        let value = serde_json::to_value(&resolved)
             .map_err(|e| ApiError::internal(e.to_string()))?;
         export.insert(record.pipeline.name.clone(), value);
     }

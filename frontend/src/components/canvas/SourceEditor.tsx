@@ -311,7 +311,27 @@ function SourcePreview({ config, connector }: { config: Record<string, unknown>;
 // Main SourceEditor
 // ---------------------------------------------------------------------------
 
-const CONNECTOR_OPTIONS = ['postgres', 'csv', 'parquet', 'rest'];
+const CONNECTOR_OPTIONS = ['postgresql', 'csv', 'parquet', 'rest'];
+const CONNECTOR_LABELS: Record<string, string> = {
+  postgresql: 'PostgreSQL',
+  csv: 'CSV',
+  parquet: 'Parquet',
+  rest: 'REST API',
+};
+
+function isPostgres(c: string): boolean {
+  return c === 'postgresql' || c === 'postgres';
+}
+
+function isFile(c: string): boolean {
+  return c === 'csv' || c === 'parquet' || c === 'file';
+}
+
+function normalizeConnector(c: string): string {
+  if (c === 'postgres') return 'postgresql';
+  if (c === 'file') return 'csv';
+  return c;
+}
 
 export function SourceEditor({
   config,
@@ -319,30 +339,36 @@ export function SourceEditor({
   onConfigChange,
   onConnectorChange,
 }: SourceEditorProps) {
+  const norm = normalizeConnector(connector);
+  const format = config.format as string | undefined;
+  const effectiveFileType = norm === 'parquet' || format === 'parquet' ? 'parquet' : 'csv';
+
   return (
     <div className="connector-editor">
       <div className="connector-editor__section">
         <div className="connector-editor__section-title">Connector Type</div>
         <select
           className="connector-editor__select"
-          value={connector}
+          value={norm}
           onChange={(e) => onConnectorChange(e.target.value)}
         >
           {CONNECTOR_OPTIONS.map((opt) => (
             <option key={opt} value={opt}>
-              {opt.charAt(0).toUpperCase() + opt.slice(1)}
+              {CONNECTOR_LABELS[opt] ?? opt}
             </option>
           ))}
         </select>
       </div>
 
-      {connector === 'postgres' && (
+      {isPostgres(connector) && (
         <PostgresSourceForm config={config} onChange={onConfigChange} />
       )}
-      {(connector === 'csv' || connector === 'parquet') && (
-        <FileSourceForm config={config} connector={connector} onChange={onConfigChange} />
+      {isFile(connector) && (
+        <FileSourceForm config={config} connector={effectiveFileType} onChange={onConfigChange} />
       )}
-      {connector === 'rest' && <RestSourceForm config={config} onChange={onConfigChange} />}
+      {(connector === 'rest' || connector === 'rest_api' || connector === 'http') && (
+        <RestSourceForm config={config} onChange={onConfigChange} />
+      )}
 
       <SourcePreview config={config} connector={connector} />
     </div>

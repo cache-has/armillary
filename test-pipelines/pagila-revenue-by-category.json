@@ -11,10 +11,13 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "table": "rental"
       },
-      "position": { "x": 0, "y": 0 },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
       "pinned_position": false
     },
     {
@@ -23,10 +26,13 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "table": "payment_p2022_01"
       },
-      "position": { "x": 0, "y": 200 },
+      "position": {
+        "x": 0,
+        "y": 200
+      },
       "pinned_position": false
     },
     {
@@ -35,10 +41,13 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "table": "film_category"
       },
-      "position": { "x": 0, "y": 600 },
+      "position": {
+        "x": 0,
+        "y": 600
+      },
       "pinned_position": false
     },
     {
@@ -47,10 +56,13 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "table": "category"
       },
-      "position": { "x": 0, "y": 800 },
+      "position": {
+        "x": 0,
+        "y": 800
+      },
       "pinned_position": false
     },
     {
@@ -59,10 +71,13 @@
       "type": "source",
       "connector": "postgresql",
       "config": {
-        "connection_string": "postgresql://cachemcclure@localhost:5432/pagila",
+        "connection_string": "{{ env:PAGILA_CONNECTION }}",
         "table": "inventory"
       },
-      "position": { "x": 0, "y": 1000 },
+      "position": {
+        "x": 0,
+        "y": 1000
+      },
       "pinned_position": false
     },
     {
@@ -72,7 +87,10 @@
       "mode": "sql",
       "code": "SELECT\n  r.rental_id,\n  r.inventory_id,\n  r.customer_id,\n  r.rental_date,\n  p.amount\nFROM rental r\nINNER JOIN payment p ON r.rental_id = p.rental_id",
       "materialized": false,
-      "position": { "x": 400, "y": 100 },
+      "position": {
+        "x": 400,
+        "y": 100
+      },
       "pinned_position": false
     },
     {
@@ -82,7 +100,10 @@
       "mode": "sql",
       "code": "SELECT\n  rp.rental_id,\n  rp.customer_id,\n  rp.rental_date,\n  rp.amount,\n  i.film_id\nFROM join_rental_payment rp\nINNER JOIN inventory i ON rp.inventory_id = i.inventory_id",
       "materialized": false,
-      "position": { "x": 700, "y": 300 },
+      "position": {
+        "x": 700,
+        "y": 300
+      },
       "pinned_position": false
     },
     {
@@ -92,7 +113,10 @@
       "mode": "sql",
       "code": "SELECT\n  rif.rental_id,\n  rif.amount,\n  rif.rental_date,\n  c.name AS category_name\nFROM join_inventory_film rif\nINNER JOIN film_category fc ON rif.film_id = fc.film_id\nINNER JOIN category c ON fc.category_id = c.category_id",
       "materialized": false,
-      "position": { "x": 1000, "y": 500 },
+      "position": {
+        "x": 1000,
+        "y": 500
+      },
       "pinned_position": false
     },
     {
@@ -102,7 +126,10 @@
       "mode": "sql",
       "code": "SELECT\n  category_name,\n  COUNT(*) AS total_rentals,\n  ROUND(SUM(amount), 2) AS total_revenue,\n  ROUND(AVG(amount), 2) AS avg_rental_price\nFROM join_film_category\nGROUP BY category_name\nORDER BY total_revenue DESC",
       "materialized": false,
-      "position": { "x": 1300, "y": 500 },
+      "position": {
+        "x": 1300,
+        "y": 500
+      },
       "pinned_position": false
     },
     {
@@ -111,19 +138,49 @@
       "type": "sink",
       "connector": "stdout",
       "config": {},
-      "position": { "x": 1600, "y": 500 },
+      "position": {
+        "x": 1600,
+        "y": 500
+      },
       "pinned_position": false
     }
   ],
   "edges": [
-    { "from": "rental", "to": "join_rental_payment" },
-    { "from": "payment", "to": "join_rental_payment" },
-    { "from": "join_rental_payment", "to": "join_inventory_film" },
-    { "from": "inventory", "to": "join_inventory_film" },
-    { "from": "join_inventory_film", "to": "join_film_category" },
-    { "from": "film_category", "to": "join_film_category" },
-    { "from": "category", "to": "join_film_category" },
-    { "from": "join_film_category", "to": "aggregate" },
-    { "from": "aggregate", "to": "sink_stdout" }
+    {
+      "from": "rental",
+      "to": "join_rental_payment"
+    },
+    {
+      "from": "payment",
+      "to": "join_rental_payment"
+    },
+    {
+      "from": "join_rental_payment",
+      "to": "join_inventory_film"
+    },
+    {
+      "from": "inventory",
+      "to": "join_inventory_film"
+    },
+    {
+      "from": "join_inventory_film",
+      "to": "join_film_category"
+    },
+    {
+      "from": "film_category",
+      "to": "join_film_category"
+    },
+    {
+      "from": "category",
+      "to": "join_film_category"
+    },
+    {
+      "from": "join_film_category",
+      "to": "aggregate"
+    },
+    {
+      "from": "aggregate",
+      "to": "sink_stdout"
+    }
   ]
 }

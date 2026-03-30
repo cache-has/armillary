@@ -167,6 +167,20 @@ impl PipelineExecutor {
                 }
 
                 NodeKind::Transform(xform_cfg) => {
+                    // Resolve code from file or inline.
+                    let code = pipeline.resolve_code(xform_cfg).map_err(|e| {
+                        ExecutorError::Node {
+                            node_id: node_id.clone(),
+                            kind: crate::error::NodeErrorKind::CodeFileRead {
+                                path: xform_cfg
+                                    .code_path
+                                    .clone()
+                                    .unwrap_or_else(|| "(inline)".into()),
+                                source: e,
+                            },
+                        }
+                    })?;
+
                     let upstream_ids = pipeline.upstream_of(node_id);
                     let mut rows_in: u64 = 0;
                     let upstream_data =
@@ -179,8 +193,7 @@ impl PipelineExecutor {
 
                     let batches = match xform_cfg.mode {
                         flux_engine::node::TransformMode::Sql => {
-                            let interpolated_sql =
-                                resolved_vars.interpolate(&xform_cfg.code);
+                            let interpolated_sql = resolved_vars.interpolate(&code);
                             Self::execute_sql_transform(&interpolated_sql, upstream_data, None)
                                 .await
                                 .map_err(|kind| ExecutorError::Node {
@@ -190,7 +203,7 @@ impl PipelineExecutor {
                         }
                         flux_engine::node::TransformMode::Python => {
                             crate::python_runtime::execute_python_transform(
-                                &xform_cfg.code,
+                                &code,
                                 upstream_data,
                                 resolved_vars.as_map(),
                             )

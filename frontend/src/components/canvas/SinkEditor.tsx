@@ -269,7 +269,28 @@ function EnvironmentOverrides({
 // Main SinkEditor
 // ---------------------------------------------------------------------------
 
-const CONNECTOR_OPTIONS = ['postgres', 'csv', 'parquet', 'stdout'];
+const CONNECTOR_OPTIONS = ['postgresql', 'csv', 'parquet', 'stdout'];
+const CONNECTOR_LABELS: Record<string, string> = {
+  postgresql: 'PostgreSQL',
+  csv: 'CSV',
+  parquet: 'Parquet',
+  stdout: 'Stdout',
+};
+
+/** Normalize connector aliases to canonical names. */
+function normalizeConnector(c: string): string {
+  if (c === 'postgres') return 'postgresql';
+  if (c === 'file') return 'csv'; // file connector defaults to csv
+  return c;
+}
+
+function isPostgres(c: string): boolean {
+  return c === 'postgresql' || c === 'postgres';
+}
+
+function isFile(c: string): boolean {
+  return c === 'csv' || c === 'parquet' || c === 'file';
+}
 
 export function SinkEditor({
   config,
@@ -277,28 +298,32 @@ export function SinkEditor({
   onConfigChange,
   onConnectorChange,
 }: SinkEditorProps) {
+  const norm = normalizeConnector(connector);
+  const format = config.format as string | undefined;
+  const effectiveFileType = norm === 'parquet' || format === 'parquet' ? 'parquet' : 'csv';
+
   return (
     <div className="connector-editor">
       <div className="connector-editor__section">
         <div className="connector-editor__section-title">Connector Type</div>
         <select
           className="connector-editor__select"
-          value={connector}
+          value={norm}
           onChange={(e) => onConnectorChange(e.target.value)}
         >
           {CONNECTOR_OPTIONS.map((opt) => (
             <option key={opt} value={opt}>
-              {opt.charAt(0).toUpperCase() + opt.slice(1)}
+              {CONNECTOR_LABELS[opt] ?? opt}
             </option>
           ))}
         </select>
       </div>
 
-      {connector === 'postgres' && (
+      {isPostgres(connector) && (
         <PostgresSinkForm config={config} onChange={onConfigChange} />
       )}
-      {(connector === 'csv' || connector === 'parquet') && (
-        <FileSinkForm config={config} connector={connector} onChange={onConfigChange} />
+      {isFile(connector) && (
+        <FileSinkForm config={config} connector={effectiveFileType} onChange={onConfigChange} />
       )}
       {connector === 'stdout' && <StdoutSinkForm config={config} onChange={onConfigChange} />}
 

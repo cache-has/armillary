@@ -10,8 +10,8 @@
 use std::time::Instant;
 
 use arrow::array::{
-    Array, AsArray, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array, Int16Array,
-    Int32Array, Int64Array, TimestampMicrosecondArray,
+    Array, AsArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Float32Array,
+    Float64Array, Int16Array, Int32Array, Int64Array, TimestampMicrosecondArray,
 };
 use arrow::datatypes::{DataType, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
@@ -134,10 +134,24 @@ impl PipelineSink for PostgresSink {
                     let param_refs: Vec<&(dyn ToSql + Sync)> =
                         params.iter().map(|p| p.as_ref()).collect();
 
-                    transaction
+                    if let Err(e) = transaction
                         .execute(&insert_sql, &param_refs)
                         .await
-                        .map_err(|e| format!("failed to insert row {row_idx}: {e}"))?;
+                    {
+                        let schema = batch.schema();
+                        let col_info: Vec<String> = schema
+                            .fields()
+                            .iter()
+                            .enumerate()
+                            .map(|(i, f)| {
+                                let is_null = batch.column(i).is_null(row_idx);
+                                format!("  ${}: {} ({}) null={}", i + 1, f.name(), f.data_type(), is_null)
+                            })
+                            .collect();
+                        return Err(format!(
+                            "failed to insert row {row_idx}: {e}\n{}", col_info.join("\n")
+                        ).into());
+                    }
 
                     total_rows += 1;
                     // Estimate bytes as a rough sum of parameter sizes.
@@ -151,6 +165,32 @@ impl PipelineSink for PostgresSink {
             .commit()
             .await
             .map_err(|e| format!("failed to commit transaction: {e}"))?;
+
+        // Create indexes after data is written.
+        if !pg_config.indexes.is_empty() {
+            for (i, columns) in pg_config.indexes.iter().enumerate() {
+                if columns.is_empty() {
+                    continue;
+                }
+                let idx_name = format!(
+                    "idx_{}_{}",
+                    table.replace('"', ""),
+                    columns.join("_")
+                );
+                let col_list: Vec<String> = columns.iter().map(|c| quote_ident(c)).collect();
+                let sql = format!(
+                    "CREATE INDEX IF NOT EXISTS {} ON {} ({})",
+                    quote_ident(&idx_name),
+                    quote_ident(table),
+                    col_list.join(", ")
+                );
+                debug!(index = i, sql = %sql, "creating index");
+                client
+                    .execute(&sql, &[])
+                    .await
+                    .map_err(|e| format!("failed to create index '{idx_name}': {e}"))?;
+            }
+        }
 
         debug!(rows = total_rows, "postgresql sink write complete");
 
@@ -195,8 +235,10 @@ fn build_create_table_sql(table: &str, schema: &Schema) -> Result<String, Provid
         .iter()
         .map(|field| {
             let pg_type = arrow_type_to_pg(field.data_type())?;
-            let nullable = if field.is_nullable() { "" } else { " NOT NULL" };
-            Ok(format!("{} {pg_type}{nullable}", quote_ident(field.name())))
+            // Always allow NULLs in auto-created tables — Arrow schemas from
+            // query results don't always reflect actual nullability accurately
+            // (e.g. LEFT JOINs may produce nulls in fields marked non-nullable).
+            Ok(format!("{} {pg_type}", quote_ident(field.name())))
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
 
@@ -274,11 +316,12 @@ fn arrow_type_to_pg(data_type: &DataType) -> Result<&'static str, ProviderError>
         DataType::UInt64 => Ok("BIGINT"),
         DataType::Float16 | DataType::Float32 => Ok("REAL"),
         DataType::Float64 => Ok("DOUBLE PRECISION"),
-        DataType::Utf8 | DataType::LargeUtf8 => Ok("TEXT"),
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Ok("TEXT"),
         DataType::Binary | DataType::LargeBinary => Ok("BYTEA"),
         DataType::Date32 | DataType::Date64 => Ok("DATE"),
         DataType::Timestamp(_, Some(_)) => Ok("TIMESTAMPTZ"),
         DataType::Timestamp(_, None) => Ok("TIMESTAMP"),
+        DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Ok("NUMERIC"),
         _ => Err(format!("unsupported Arrow type for postgresql sink: {data_type}").into()),
     }
 }
@@ -341,7 +384,20 @@ fn extract_row_params(batch: &RecordBatch, row_idx: usize) -> Result<Vec<SqlPara
         let field = schema.field(col_idx);
 
         if col.is_null(row_idx) {
-            params.push(SqlParam::null());
+            // Use a typed null so tokio-postgres can match the parameter type.
+            let param = match field.data_type() {
+                DataType::Boolean => SqlParam::new(None::<bool>, 0),
+                DataType::Int8 | DataType::UInt8 | DataType::Int16 => SqlParam::new(None::<i16>, 0),
+                DataType::UInt16 | DataType::Int32 => SqlParam::new(None::<i32>, 0),
+                DataType::UInt32 | DataType::Int64 | DataType::UInt64 => SqlParam::new(None::<i64>, 0),
+                DataType::Float16 | DataType::Float32 => SqlParam::new(None::<f32>, 0),
+                DataType::Float64 | DataType::Decimal128(_, _) => SqlParam::new(None::<f64>, 0),
+                DataType::Date32 | DataType::Date64 => SqlParam::new(None::<chrono::NaiveDate>, 0),
+                DataType::Timestamp(_, Some(_)) => SqlParam::new(None::<chrono::DateTime<chrono::Utc>>, 0),
+                DataType::Timestamp(_, None) => SqlParam::new(None::<chrono::NaiveDateTime>, 0),
+                _ => SqlParam::new(None::<String>, 0), // TEXT fallback
+            };
+            params.push(param);
             continue;
         }
 
@@ -363,6 +419,14 @@ fn extract_typed_param(
             let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
             let val = arr.value(row_idx);
             Ok(SqlParam::new(val, 1))
+        }
+        DataType::Int8 | DataType::UInt8 => {
+            let val = if let Some(arr) = col.as_any().downcast_ref::<arrow::array::Int8Array>() {
+                arr.value(row_idx) as i16
+            } else {
+                col.as_any().downcast_ref::<arrow::array::UInt8Array>().unwrap().value(row_idx) as i16
+            };
+            Ok(SqlParam::new(val, 2))
         }
         DataType::Int16 => {
             let arr = col.as_any().downcast_ref::<Int16Array>().unwrap();
@@ -389,9 +453,21 @@ fn extract_typed_param(
             let val = arr.value(row_idx);
             Ok(SqlParam::new(val, 8))
         }
-        DataType::Utf8 | DataType::LargeUtf8 => {
-            let arr = col.as_string::<i32>();
-            let val = arr.value(row_idx).to_string();
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => {
+            // Double-check nullability — some query engines produce nulls in
+            // non-nullable schema fields (e.g. LEFT JOIN results).
+            if col.is_null(row_idx) {
+                return Ok(SqlParam::null());
+            }
+            let val = if let Some(arr) = col.as_any().downcast_ref::<arrow::array::StringArray>() {
+                arr.value(row_idx).to_string()
+            } else if let Some(arr) =
+                col.as_any().downcast_ref::<arrow::array::StringViewArray>()
+            {
+                arr.value(row_idx).to_string()
+            } else {
+                col.as_string::<i32>().value(row_idx).to_string()
+            };
             let size = val.len();
             Ok(SqlParam::new(val, size))
         }
@@ -428,6 +504,13 @@ fn extract_typed_param(
             let dt = chrono::DateTime::from_timestamp_micros(micros)
                 .ok_or_else(|| format!("invalid timestamp microseconds: {micros}"))?;
             Ok(SqlParam::new(dt, 8))
+        }
+        DataType::Decimal128(_, scale) => {
+            let arr = col.as_any().downcast_ref::<Decimal128Array>().unwrap();
+            let raw = arr.value(row_idx);
+            // Convert to f64 for PostgreSQL NUMERIC. The scale gives decimal places.
+            let val = raw as f64 / 10f64.powi(*scale as i32);
+            Ok(SqlParam::new(val, 8))
         }
         _ => Err(format!(
             "unsupported Arrow type for postgresql parameter extraction: {data_type}"

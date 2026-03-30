@@ -131,6 +131,10 @@ enum Command {
 
 fn main() -> ExitCode {
     color::init();
+
+    // Load .env file from the current directory (silently skip if not found).
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -142,13 +146,17 @@ fn main() -> ExitCode {
         OutputFormat::Human
     };
 
-    match run(cli, format) {
-        Ok(()) => ExitCode::SUCCESS,
+    let code = match run(cli, format) {
+        Ok(()) => 0,
         Err(e) => {
             eprintln!("{} {e:#}", color::red("Error:"));
-            ExitCode::FAILURE
+            1
         }
-    }
+    };
+    // Force exit — background threads (tokio tasks, DataFusion thread pools)
+    // can prevent a clean shutdown. The server command handles its own
+    // lifecycle; all other commands should exit immediately when done.
+    std::process::exit(code);
 }
 
 fn run(cli: Cli, format: OutputFormat) -> Result<()> {
@@ -234,8 +242,11 @@ fn export_pipeline(
     }
     .ok_or_else(|| anyhow::anyhow!("pipeline `{pipeline}` not found"))?;
 
-    let json = record
+    let export_pipeline = record
         .pipeline
+        .with_resolved_code()
+        .context("failed to resolve code files")?;
+    let json = export_pipeline
         .to_json()
         .context("failed to serialize pipeline")?;
     let out_path = match output {
@@ -301,8 +312,13 @@ fn export_all(output_dir: Option<&std::path::Path>, format: OutputFormat) -> Res
 
     let mut exported = Vec::new();
     for record in &records {
-        let json = record
+        let export_pipeline = record
             .pipeline
+            .with_resolved_code()
+            .with_context(|| {
+                format!("failed to resolve code files for `{}`", record.pipeline.name)
+            })?;
+        let json = export_pipeline
             .to_json()
             .with_context(|| format!("failed to serialize pipeline `{}`", record.pipeline.name))?;
         let file_name = sanitize_name(&record.pipeline.name);

@@ -101,6 +101,28 @@ export async function fetchPipeline(id: string): Promise<ApiPipelineResponse> {
   return res.json();
 }
 
+/** Create a new empty pipeline. */
+export async function createPipeline(name: string): Promise<ApiPipelineResponse> {
+  const res = await fetch(BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      version: 1,
+      default_environment: 'dev',
+      variables: {},
+      environment_overrides: {},
+      nodes: [],
+      edges: [],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error ?? `Failed to create pipeline: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
 /** List pipelines with optional pagination. */
 export async function listPipelines(
   limit = 50,

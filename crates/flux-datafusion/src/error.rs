@@ -37,6 +37,12 @@ pub enum NodeErrorKind {
 
     #[error("Python interpreter not found (`{0}`). Ensure Python 3 is installed and on your PATH.")]
     PythonNotFound(String),
+
+    #[error("failed to read code file `{path}`: {source}")]
+    CodeFileRead {
+        path: String,
+        source: std::io::Error,
+    },
 }
 
 /// Top-level executor error.

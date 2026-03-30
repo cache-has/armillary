@@ -17,9 +17,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-/// Regex matching `{{ variable_name }}` with optional whitespace.
+/// Regex matching `{{ variable_name }}` or `{{ env:VAR_NAME }}` with optional whitespace.
 static VAR_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}").unwrap());
+
+/// Regex matching `{{ env:VAR_NAME }}` references.
+static ENV_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*env:([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}").unwrap());
 
 /// Built-in variable names that are always available.
 pub const BUILTIN_VARS: &[&str] = &["run_date", "run_id", "pipeline_name", "environment"];
@@ -87,15 +91,28 @@ impl ResolvedVariables {
         &self.values
     }
 
-    /// Interpolate `{{ variable }}` references in a string.
+    /// Interpolate `{{ variable }}` and `{{ env:VAR }}` references in a string.
     ///
-    /// Variables are replaced with their string representation:
+    /// `{{ env:VAR }}` references are resolved from OS environment variables
+    /// (including values loaded from `.env` files). Pipeline variables use the
+    /// normal precedence chain.
+    ///
+    /// Variable string representation:
     /// - Strings → the string value (without quotes)
     /// - Numbers/booleans → their JSON representation
     /// - Null → empty string
     pub fn interpolate(&self, input: &str) -> String {
-        VAR_PATTERN
+        // First pass: resolve {{ env:VAR }} references.
+        let after_env = ENV_PATTERN
             .replace_all(input, |caps: &regex::Captures| {
+                let var_name = &caps[1];
+                std::env::var(var_name).unwrap_or_default()
+            })
+            .into_owned();
+
+        // Second pass: resolve {{ variable }} references.
+        VAR_PATTERN
+            .replace_all(&after_env, |caps: &regex::Captures| {
                 let var_name = &caps[1];
                 match self.values.get(var_name) {
                     Some(Value::String(s)) => s.clone(),

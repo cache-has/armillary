@@ -6,6 +6,9 @@ import { usePipelineStore } from '../../stores/pipelineStore';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import {
   listPipelines,
+  createPipeline,
+  importPipeline,
+  exportPipeline,
   runPipeline,
   type ApiPipelineResponse,
 } from '../../api/pipelines';
@@ -14,7 +17,7 @@ import { EnvironmentSelector } from './EnvironmentSelector';
 import './CanvasToolbar.css';
 
 // ---------------------------------------------------------------------------
-// Pipeline Selector
+// Pipeline Selector (with New / Import / Export)
 // ---------------------------------------------------------------------------
 
 function PipelineSelector() {
@@ -29,6 +32,7 @@ function PipelineSelector() {
   const [pipelines, setPipelines] = useState<ApiPipelineResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Close on outside click
   useEffect(() => {
@@ -52,18 +56,70 @@ function PipelineSelector() {
       .finally(() => setLoading(false));
   }, [open]);
 
-  const handleSelect = useCallback(
+  const switchToPipeline = useCallback(
     async (id: string) => {
-      setOpen(false);
-      if (id === pipelineId) return;
       await loadPipeline(id);
       const pipeline = usePipelineStore.getState().apiPipeline;
       if (pipeline) {
         setActiveEnvironment(pipeline.default_environment);
       }
     },
-    [pipelineId, loadPipeline, setActiveEnvironment],
+    [loadPipeline, setActiveEnvironment],
   );
+
+  const handleSelect = useCallback(
+    async (id: string) => {
+      setOpen(false);
+      if (id === pipelineId) return;
+      await switchToPipeline(id);
+    },
+    [pipelineId, switchToPipeline],
+  );
+
+  const handleNew = useCallback(async () => {
+    setOpen(false);
+    const name = window.prompt('Pipeline name:');
+    if (!name?.trim()) return;
+    try {
+      const res = await createPipeline(name.trim());
+      await switchToPipeline(res.id);
+    } catch (err) {
+      alert((err as Error).message);
+    }
+  }, [switchToPipeline]);
+
+  const handleImport = useCallback(() => {
+    setOpen(false);
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      // Reset so the same file can be re-imported
+      e.target.value = '';
+      try {
+        const text = await file.text();
+        const pipelineJson = JSON.parse(text);
+        const res = await importPipeline(pipelineJson, 'rename');
+        await switchToPipeline(res.id);
+      } catch (err) {
+        alert(`Import failed: ${(err as Error).message}`);
+      }
+    },
+    [switchToPipeline],
+  );
+
+  const handleExport = useCallback(async () => {
+    setOpen(false);
+    if (!pipelineId || pipelineId === 'demo') return;
+    try {
+      await exportPipeline(pipelineId);
+    } catch (err) {
+      alert(`Export failed: ${(err as Error).message}`);
+    }
+  }, [pipelineId]);
 
   const name = apiPipeline?.name ?? 'No pipeline';
 
@@ -81,8 +137,35 @@ function PipelineSelector() {
         </span>
       </button>
 
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
+
       {open && (
-        <div className="pipeline-selector__dropdown" role="listbox">
+        <div className="pipeline-selector__dropdown">
+          {/* Actions */}
+          <div className="pipeline-selector__actions">
+            <button className="pipeline-selector__action" onClick={handleNew}>
+              New Pipeline
+            </button>
+            <button className="pipeline-selector__action" onClick={handleImport}>
+              Import JSON
+            </button>
+            {pipelineId && pipelineId !== 'demo' && (
+              <button className="pipeline-selector__action" onClick={handleExport}>
+                Export
+              </button>
+            )}
+          </div>
+
+          <div className="pipeline-selector__divider" />
+
+          {/* Pipeline list */}
           {loading && (
             <div className="pipeline-selector__empty">Loading...</div>
           )}
@@ -132,13 +215,11 @@ function RunButton() {
     try {
       await runPipeline(pipelineId, activeEnvironment);
       setState('success');
-      // Notify store so side panel refreshes run stats.
       usePipelineStore.getState().notifyRunCompleted();
       timerRef.current = setTimeout(() => setState('idle'), 3000);
     } catch (err) {
       setState('error');
       setError((err as Error).message);
-      // Still notify — partial runs may have completed some nodes.
       usePipelineStore.getState().notifyRunCompleted();
       timerRef.current = setTimeout(() => setState('idle'), 5000);
     }

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::edge::Edge;
-use crate::node::{Node, NodeId};
+use crate::node::{Node, NodeId, TransformConfig};
 use crate::sample::SampleConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// A complete pipeline definition: a DAG of source, transform, and sink nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,11 @@ pub struct Pipeline {
     /// When `None`, previews use `SampleConfig::default()` (first 100 rows).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_config: Option<SampleConfig>,
+    /// Base directory for resolving `code_path` references on transform nodes.
+    /// Paths in `code_path` are joined to this directory. When `None`, paths
+    /// are resolved relative to the current working directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_dir: Option<String>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
 }
@@ -79,6 +85,40 @@ impl Pipeline {
     /// Return an iterator of node IDs.
     pub fn node_ids(&self) -> impl Iterator<Item = &NodeId> {
         self.nodes.iter().map(|n| &n.id)
+    }
+
+    /// Resolve the code for a transform node.
+    ///
+    /// If `code_path` is set, reads the file relative to `code_dir` (or the
+    /// current working directory). Otherwise returns the inline `code` string.
+    pub fn resolve_code(&self, xform: &TransformConfig) -> Result<String, std::io::Error> {
+        match &xform.code_path {
+            Some(rel_path) => {
+                let base = self.code_dir.as_deref().unwrap_or(".");
+                let full_path = Path::new(base).join(rel_path);
+                std::fs::read_to_string(&full_path)
+            }
+            None => Ok(xform.code.clone()),
+        }
+    }
+
+    /// Return a copy of this pipeline with all `code_path` references resolved
+    /// to inline `code` and `code_path`/`code_dir` cleared. Used for export so
+    /// the resulting JSON is self-contained and importable without external files.
+    pub fn with_resolved_code(&self) -> Result<Self, std::io::Error> {
+        use crate::node::NodeKind;
+
+        let mut resolved = self.clone();
+        for node in &mut resolved.nodes {
+            if let NodeKind::Transform(ref mut xform) = node.kind {
+                if xform.code_path.is_some() {
+                    xform.code = self.resolve_code(xform)?;
+                    xform.code_path = None;
+                }
+            }
+        }
+        resolved.code_dir = None;
+        Ok(resolved)
     }
 
     /// Return the upstream node IDs for a given node.

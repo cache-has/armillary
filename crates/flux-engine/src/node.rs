@@ -87,9 +87,15 @@ pub enum TransformMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransformConfig {
     pub mode: TransformMode,
-    /// SQL query or Python code.
+    /// Inline SQL query or Python code. Ignored when `code_path` is set.
     #[serde(default)]
     pub code: String,
+    /// Path to an external file containing the SQL or Python code.
+    /// Resolved relative to the pipeline's `code_dir` (or the working directory
+    /// if `code_dir` is not set). Supports nested paths like
+    /// `"silver/usgs/earthquake_transform.py"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_path: Option<String>,
     /// Whether this node's output should be materialized (cached).
     #[serde(default)]
     pub materialized: bool,
