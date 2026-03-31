@@ -26,3 +26,7 @@ tempfile = "3"
 [dev-dependencies]
 tokio = { workspace = true }
 serde_json = { workspace = true }
+flux-connectors = { workspace = true }
+tempfile = { workspace = true }
+arrow = { workspace = true }
+parquet = { version = "58", features = ["arrow"] }

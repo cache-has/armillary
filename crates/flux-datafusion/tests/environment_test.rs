@@ -135,9 +135,7 @@ fn make_batch(ids: &[i32], names: &[&str]) -> RecordBatch {
         test_schema(),
         vec![
             Arc::new(Int32Array::from(ids.to_vec())),
-            Arc::new(StringArray::from(
-                names.iter().map(|s| *s).collect::<Vec<_>>(),
-            )),
+            Arc::new(StringArray::from(names.to_vec())),
         ],
     )
     .unwrap()
