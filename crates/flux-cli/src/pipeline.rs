@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
 use crate::OutputFormat;
+use flux_datafusion::SecretResolver;
 
 /// Parse a `key=value` string into a tuple. Used by clap's `value_parser`.
 pub fn parse_var(s: &str) -> Result<(String, String), String> {
@@ -186,6 +187,55 @@ pub fn run(
     result
 }
 
+/// [`SecretResolver`] for CLI usage that prompts the user for the store
+/// password the first time a secret reference is encountered.
+struct CliSecretResolver {
+    store: std::sync::Mutex<Option<flux_secrets::SecretStore>>,
+    store_path: std::path::PathBuf,
+}
+
+impl CliSecretResolver {
+    fn new() -> Option<Self> {
+        let path = flux_secrets::SecretStore::default_path()?;
+        if !flux_secrets::SecretStore::is_initialized(&path) {
+            return None;
+        }
+        Some(Self {
+            store: std::sync::Mutex::new(None),
+            store_path: path,
+        })
+    }
+}
+
+impl SecretResolver for CliSecretResolver {
+    fn resolve_json(
+        &self,
+        value: &serde_json::Value,
+        environment: Option<&str>,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+        // Quick check — if there are no secret refs, skip the unlock prompt.
+        let json_str = serde_json::to_string(value).unwrap_or_default();
+        if !flux_secrets::has_secret_refs(&json_str) {
+            return Ok(value.clone());
+        }
+
+        let mut guard = self
+            .store
+            .lock()
+            .map_err(|e| format!("mutex poisoned: {e}"))?;
+        if guard.is_none() {
+            let password = rpassword::prompt_password("Secret store password: ")
+                .map_err(|e| format!("failed to read password: {e}"))?;
+            let store = flux_secrets::SecretStore::open(&self.store_path, password.as_bytes())
+                .map_err(|e| format!("failed to open secret store: {e}"))?;
+            *guard = Some(store);
+        }
+        let store = guard.as_ref().unwrap();
+        flux_secrets::resolve_json_secrets(value, store, environment)
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+}
+
 async fn execute_pipeline(
     record: &flux_engine::PipelineRecord,
     stores: &Stores,
@@ -207,6 +257,9 @@ async fn execute_pipeline(
         }
     });
 
+    let secret_resolver: Option<Arc<dyn SecretResolver>> =
+        CliSecretResolver::new().map(|r| Arc::new(r) as Arc<dyn SecretResolver>);
+
     let options = flux_datafusion::ExecutionOptions {
         environment: environment.clone(),
         run_store: Some(Arc::clone(&stores.run_store)),
@@ -214,6 +267,7 @@ async fn execute_pipeline(
         environment_resolver: None,
         progress: Some(progress_tx),
         variable_overrides,
+        secret_resolver,
     };
 
     let result =

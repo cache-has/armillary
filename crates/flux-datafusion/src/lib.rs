@@ -19,7 +19,7 @@ pub mod stats;
 
 pub use column_stats::{ColumnStats, compute_column_stats};
 pub use environment::{Environment, EnvironmentStore, TableOverride};
-pub use executor::{ExecutionOptions, PipelineExecutor};
+pub use executor::{ExecutionOptions, PipelineExecutor, SecretResolver};
 pub use friendly_sql::{PreprocessError, preprocess_sql};
 pub use output_cache::OutputCache;
 pub use preview::{PreviewNodeResult, PreviewOptions, PreviewResult, PreviewStatus};

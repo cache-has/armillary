@@ -83,18 +83,18 @@ pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
             .context("failed to open environment store")?,
     );
 
-    let secret_store = match std::env::var("HORIZON_FLUX_SECRET_PASSWORD") {
+    let secrets_path = data_dir.join("secrets.db");
+    let secret_session = match std::env::var("HORIZON_FLUX_SECRET_PASSWORD") {
         Ok(password) if !password.is_empty() => {
-            let secrets_path = data_dir.join("secrets.db");
             match flux_secrets::SecretStore::open_or_init(&secrets_path, password.as_bytes()) {
-                Ok(store) => Some(Arc::new(std::sync::Mutex::new(store))),
+                Ok(store) => flux_server::state::SecretSession::new_unlocked(store, secrets_path),
                 Err(e) => {
                     tracing::warn!("Could not open secret store: {e}");
-                    None
+                    flux_server::state::SecretSession::new(secrets_path)
                 }
             }
         }
-        _ => None,
+        _ => flux_server::state::SecretSession::new(secrets_path),
     };
 
     let event_tx = flux_server::AppState::new_event_channel();
@@ -113,7 +113,7 @@ pub fn start(port: u16, headless: bool, dev: bool) -> Result<()> {
         run_store,
         connector_registry,
         environment_store,
-        secret_store,
+        secret_session: Arc::new(std::sync::Mutex::new(secret_session)),
         event_tx,
         output_cache,
     };

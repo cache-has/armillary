@@ -84,9 +84,17 @@ async fn preview_node(
     match req.node {
         NodeConfig::Source { connector, config } => {
             let registry = state.connector_registry.to_provider_registry();
+            // Resolve secret references in the source config before preview.
+            let resolved_config = if let Some(resolver) = state.secret_resolver() {
+                resolver
+                    .resolve_json(&config, None)
+                    .map_err(|e| ApiError::internal(format!("secret resolution failed: {e}")))?
+            } else {
+                config
+            };
             let src_cfg = SourceConfig {
                 connector: connector.clone(),
-                config,
+                config: resolved_config,
                 cache_row_limit: None,
             };
             let node_id = NodeId::new("preview");

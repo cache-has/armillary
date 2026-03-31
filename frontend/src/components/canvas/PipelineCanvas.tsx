@@ -39,6 +39,7 @@ import type { PaletteItem } from './NodePalette';
 import { SidePanel } from './SidePanel';
 import { NodeEditorModal } from './NodeEditorModal';
 import { EnvironmentManagementPanel } from './EnvironmentManagementPanel';
+import { SecretsPanel } from './SecretsPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { useEnvironmentStore } from '../../stores/environmentStore';
 import './PipelineCanvas.css';
@@ -83,6 +84,7 @@ function PipelineCanvasInner() {
 
   const isValidConnection = useConnectionValidation(edges);
   const [unpinOnRelayout, setUnpinOnRelayout] = useState(false);
+  const [secretsPanelOpen, setSecretsPanelOpen] = useState(false);
 
   // Keyboard shortcuts: Escape to close side panel, Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z redo
   useEffect(() => {
@@ -605,7 +607,7 @@ function PipelineCanvasInner() {
           zoomable
         />
         <Panel position="top-right" className="toolbar-panel">
-          <CanvasToolbar />
+          <CanvasToolbar onSecretsClick={() => setSecretsPanelOpen((o) => !o)} />
           <div className="relayout-panel">
             <label className="relayout-checkbox">
               <input
@@ -642,6 +644,10 @@ function PipelineCanvasInner() {
 
       <SidePanel />
       <EnvironmentManagementPanel />
+      <SecretsPanel
+        open={secretsPanelOpen}
+        onClose={() => setSecretsPanelOpen(false)}
+      />
       <NodeEditorModal />
     </div>
   );

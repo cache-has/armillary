@@ -5,6 +5,7 @@ import { useCallback, useState } from 'react';
 import type { ApiNode } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
 import { StorageOptionsEditor } from './StorageOptionsEditor';
+import { SecretPicker } from './SecretPicker';
 import './connector-editor.css';
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ function PostgresSinkForm({
   onChange: (config: Record<string, unknown>) => void;
 }) {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showSecretPicker, setShowSecretPicker] = useState(false);
 
   const handleTestConnection = useCallback(async () => {
     setTestResult(null);
@@ -54,8 +56,17 @@ function PostgresSinkForm({
     <>
       <div className="connector-editor__section">
         <div className="connector-editor__section-title">Connection</div>
-        <div className="connector-editor__field">
-          <label className="connector-editor__label">Connection String</label>
+        <div className="connector-editor__field connector-editor__field-with-secret">
+          <div className="connector-editor__label-row">
+            <label className="connector-editor__label">Connection String</label>
+            <button
+              className="connector-editor__secret-btn"
+              type="button"
+              onClick={() => setShowSecretPicker((v) => !v)}
+            >
+              Use Secret
+            </button>
+          </div>
           <input
             className="connector-editor__input"
             type="password"
@@ -63,6 +74,15 @@ function PostgresSinkForm({
             onChange={(e) => onChange({ ...config, connection_string: e.target.value })}
             placeholder="postgres://user:pass@host:5432/db"
           />
+          {showSecretPicker && (
+            <SecretPicker
+              onSelect={(tpl) => {
+                onChange({ ...config, connection_string: tpl });
+                setShowSecretPicker(false);
+              }}
+              onClose={() => setShowSecretPicker(false)}
+            />
+          )}
         </div>
         <div className="connector-editor__field">
           <label className="connector-editor__label">Table Name</label>

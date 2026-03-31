@@ -665,6 +665,7 @@ async fn execute_with_run_store_persists_history() {
         environment_resolver: None,
         progress: None,
         variable_overrides: std::collections::HashMap::new(),
+        secret_resolver: None,
     };
 
     let (_result, run) = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -711,6 +712,7 @@ async fn failed_run_persists_error() {
         environment_resolver: None,
         progress: None,
         variable_overrides: std::collections::HashMap::new(),
+        secret_resolver: None,
     };
 
     let err = PipelineExecutor::execute(&pipeline, &registry, &opts)
@@ -778,6 +780,7 @@ async fn cancellation_stops_execution() {
         environment_resolver: None,
         progress: None,
         variable_overrides: std::collections::HashMap::new(),
+        secret_resolver: None,
     };
 
     // Set cancel before execution so it triggers after the first node.

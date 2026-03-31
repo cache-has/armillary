@@ -22,7 +22,9 @@ fn test_state() -> AppState {
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
-        secret_store: None,
+        secret_session: Arc::new(std::sync::Mutex::new(
+            flux_server::state::SecretSession::new(std::env::temp_dir().join("unused-secrets.db")),
+        )),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
     }

@@ -29,6 +29,23 @@ use std::time::{Instant, SystemTime};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+/// Trait for resolving `{{ secret:name }}` references in connector configs.
+///
+/// This abstraction lets the executor resolve secrets without depending on the
+/// `flux-secrets` crate directly. The server provides an implementation backed
+/// by `SecretSession`; CLI callers can provide one backed by a directly-opened
+/// `SecretStore`.
+pub trait SecretResolver: Send + Sync {
+    /// Resolve all `{{ secret:... }}` references in a JSON value.
+    ///
+    /// The `environment` parameter controls environment-scoped secret lookup.
+    fn resolve_json(
+        &self,
+        value: &Value,
+        environment: Option<&str>,
+    ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>>;
+}
+
 /// Options controlling a pipeline execution.
 pub struct ExecutionOptions {
     /// Environment name for this run (e.g. "dev", "prod").
@@ -50,6 +67,10 @@ pub struct ExecutionOptions {
     /// Runtime variable overrides. These take highest precedence over
     /// pipeline defaults and built-in variables.
     pub variable_overrides: HashMap<String, Value>,
+    /// Optional secret resolver for expanding `{{ secret:name }}` references
+    /// in connector configs. When `None`, secret references are left unresolved
+    /// (which will cause connector errors if the config contains them).
+    pub secret_resolver: Option<Arc<dyn SecretResolver>>,
 }
 
 impl Default for ExecutionOptions {
@@ -61,6 +82,7 @@ impl Default for ExecutionOptions {
             environment_resolver: None,
             progress: None,
             variable_overrides: HashMap::new(),
+            secret_resolver: None,
         }
     }
 }
@@ -182,6 +204,20 @@ impl PipelineExecutor {
                     // Interpolate variables in source connector config.
                     interpolated_cfg.config =
                         resolved_vars.interpolate_json(&interpolated_cfg.config);
+                    // Resolve secret references.
+                    if let Some(resolver) = &options.secret_resolver {
+                        match resolver
+                            .resolve_json(&interpolated_cfg.config, Some(&options.environment))
+                        {
+                            Ok(resolved) => interpolated_cfg.config = resolved,
+                            Err(e) => {
+                                return Err(ExecutorError::Node {
+                                    node_id: node_id.clone(),
+                                    kind: NodeErrorKind::Source(e),
+                                });
+                            }
+                        }
+                    }
                     Self::execute_source(node_id, &interpolated_cfg, registry).await
                 }
 
@@ -254,6 +290,21 @@ impl PipelineExecutor {
                             // Interpolate variables in sink connector config.
                             interpolated_cfg.config =
                                 resolved_vars.interpolate_json(&interpolated_cfg.config);
+                            // Resolve secret references.
+                            if let Some(resolver) = &options.secret_resolver {
+                                match resolver.resolve_json(
+                                    &interpolated_cfg.config,
+                                    Some(&options.environment),
+                                ) {
+                                    Ok(resolved) => interpolated_cfg.config = resolved,
+                                    Err(e) => {
+                                        return Err(ExecutorError::Node {
+                                            node_id: node_id.clone(),
+                                            kind: NodeErrorKind::Sink(e),
+                                        });
+                                    }
+                                }
+                            }
                             Self::execute_sink(&interpolated_cfg, all_batches, registry)
                                 .await
                                 .map(|(batches, _write_stats)| batches)
@@ -576,5 +627,51 @@ mod tests {
         let over = json!({});
         merge_override(&mut base, &over);
         assert_eq!(base["path"], "/data/file.csv");
+    }
+
+    /// A test `SecretResolver` that replaces `{{ secret:name }}` with `RESOLVED_<name>`.
+    struct FakeSecretResolver;
+
+    impl SecretResolver for FakeSecretResolver {
+        fn resolve_json(
+            &self,
+            value: &Value,
+            _environment: Option<&str>,
+        ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+            let s = serde_json::to_string(value).unwrap();
+            // Simple replacement for testing.
+            let resolved = s.replace("{{ secret:db_pass }}", "s3cret");
+            Ok(serde_json::from_str(&resolved).unwrap())
+        }
+    }
+
+    #[test]
+    fn secret_resolver_resolves_json() {
+        let resolver = FakeSecretResolver;
+        let input = json!({
+            "connection_string": "postgres://user:{{ secret:db_pass }}@localhost/db",
+            "table": "users"
+        });
+        let result = resolver.resolve_json(&input, Some("dev")).unwrap();
+        assert_eq!(
+            result["connection_string"],
+            "postgres://user:s3cret@localhost/db"
+        );
+        assert_eq!(result["table"], "users"); // untouched
+    }
+
+    #[test]
+    fn secret_resolver_none_leaves_config_unchanged() {
+        // When no resolver is set, secret refs remain as-is.
+        let input = json!({
+            "connection_string": "postgres://user:{{ secret:db_pass }}@localhost/db"
+        });
+        let resolver: Option<Arc<dyn SecretResolver>> = None;
+        // Simulate the executor logic.
+        let result = match &resolver {
+            Some(r) => r.resolve_json(&input, None).unwrap(),
+            None => input.clone(),
+        };
+        assert_eq!(result, input);
     }
 }

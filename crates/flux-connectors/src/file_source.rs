@@ -250,8 +250,8 @@ fn parse_cloud_listing_url(path_str: &str) -> Result<ListingTableUrl, ProviderEr
         "splitting cloud URL into prefix + glob"
     );
 
-    let url = Url::parse(prefix)
-        .map_err(|e| format!("invalid cloud URL prefix '{}': {}", prefix, e))?;
+    let url =
+        Url::parse(prefix).map_err(|e| format!("invalid cloud URL prefix '{}': {}", prefix, e))?;
 
     let glob_pattern = glob::Pattern::new(glob_expr)
         .map_err(|e| format!("invalid glob pattern '{}': {}", glob_expr, e))?;
@@ -309,9 +309,9 @@ mod tests {
     #[tokio::test]
     async fn cloud_glob_csv_read() {
         use arrow::array::StringArray;
+        use object_store::PutPayload;
         use object_store::memory::InMemory;
         use object_store::path::Path as ObjectPath;
-        use object_store::PutPayload;
 
         let store = InMemory::new();
 
@@ -357,7 +357,10 @@ mod tests {
         let table = ListingTable::try_new(config).unwrap();
 
         ctx.register_table("test", Arc::new(table)).unwrap();
-        let df = ctx.sql("SELECT name FROM test ORDER BY name").await.unwrap();
+        let df = ctx
+            .sql("SELECT name FROM test ORDER BY name")
+            .await
+            .unwrap();
         let batches = df.collect().await.unwrap();
 
         let names: Vec<&str> = batches
@@ -379,9 +382,9 @@ mod tests {
     #[tokio::test]
     async fn cloud_partitioned_csv_read() {
         use arrow::array::StringArray;
+        use object_store::PutPayload;
         use object_store::memory::InMemory;
         use object_store::path::Path as ObjectPath;
-        use object_store::PutPayload;
 
         let store = InMemory::new();
 

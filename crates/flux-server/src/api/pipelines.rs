@@ -364,6 +364,7 @@ async fn run_pipeline(
         environment_resolver: None,
         progress: Some(progress_tx),
         variable_overrides: req.variables,
+        secret_resolver: state.secret_resolver(),
     };
 
     let (result, run) = PipelineExecutor::execute(&record.pipeline, &provider_registry, &options)

@@ -11,40 +11,45 @@ use flux_datafusion::{EnvironmentStore, RunStore};
 use flux_engine::PipelineStore;
 use flux_secrets::SecretStore;
 use flux_server::AppState;
+use flux_server::state::SecretSession;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
-fn test_state_with_secrets() -> AppState {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let path = tmp.path().to_path_buf();
-    // Remove the file so SecretStore::init can create it fresh.
-    drop(tmp);
-    let store = SecretStore::init(&path, b"test-password").unwrap();
+/// Create state with an initialized + unlocked secret store.
+fn test_state_unlocked() -> (AppState, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let secrets_path = tmp.path().join("secrets.db");
+    let store = SecretStore::init(&secrets_path, b"test-password").unwrap();
     let pipelines_dir = tempfile::tempdir().unwrap().keep();
-    AppState {
+    let state = AppState {
         pipeline_store: Arc::new(PipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
-        secret_store: Some(Arc::new(Mutex::new(store))),
+        secret_session: Arc::new(Mutex::new(SecretSession::new_unlocked(store, secrets_path))),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
-    }
+    };
+    (state, tmp)
 }
 
-fn test_state_without_secrets() -> AppState {
+/// Create state with no secret store initialized (locked, no db file).
+fn test_state_locked() -> (AppState, tempfile::TempDir) {
+    let tmp = tempfile::tempdir().unwrap();
+    let secrets_path = tmp.path().join("secrets.db");
     let pipelines_dir = tempfile::tempdir().unwrap().keep();
-    AppState {
+    let state = AppState {
         pipeline_store: Arc::new(PipelineStore::open_in_memory(&pipelines_dir).unwrap()),
         run_store: Arc::new(RunStore::open_in_memory().unwrap()),
         connector_registry: Arc::new(ConnectorRegistry::new()),
         environment_store: Arc::new(EnvironmentStore::open_in_memory().unwrap()),
-        secret_store: None,
+        secret_session: Arc::new(Mutex::new(SecretSession::new(secrets_path))),
         event_tx: AppState::new_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
-    }
+    };
+    (state, tmp)
 }
 
 fn test_router(state: AppState) -> Router {
@@ -59,12 +64,165 @@ async fn body_json(body: Body) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// Store unavailable
+// Status endpoint
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn secrets_unavailable_returns_503() {
-    let app = test_router(test_state_without_secrets());
+async fn status_not_initialized() {
+    let (state, _tmp) = test_state_locked();
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/secrets/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["initialized"], false);
+    assert_eq!(body["unlocked"], false);
+}
+
+#[tokio::test]
+async fn status_unlocked() {
+    let (state, _tmp) = test_state_unlocked();
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/secrets/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["initialized"], true);
+    assert_eq!(body["unlocked"], true);
+}
+
+// ---------------------------------------------------------------------------
+// Init endpoint
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn init_creates_store_and_unlocks() {
+    let (state, _tmp) = test_state_locked();
+    let app = test_router(state.clone());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/init")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"password": "my-pass", "confirm": "my-pass"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Should now be initialized and unlocked.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/secrets/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["initialized"], true);
+    assert_eq!(body["unlocked"], true);
+}
+
+#[tokio::test]
+async fn init_password_mismatch_returns_400() {
+    let (state, _tmp) = test_state_locked();
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/init")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"password": "a", "confirm": "b"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn init_already_initialized_returns_409() {
+    let (state, _tmp) = test_state_unlocked();
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/init")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"password": "x", "confirm": "x"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+// ---------------------------------------------------------------------------
+// Unlock / Lock
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unlock_and_lock_lifecycle() {
+    let (state, _tmp) = test_state_unlocked();
+
+    // Lock it.
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/lock")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Confirm locked.
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/secrets/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["unlocked"], false);
+
+    // CRUD should return 401.
+    let app = test_router(state.clone());
     let resp = app
         .oneshot(
             Request::builder()
@@ -74,17 +232,94 @@ async fn secrets_unavailable_returns_503() {
         )
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
+    // Unlock with correct password.
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/unlock")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"password": "test-password"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // CRUD should work again.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/secrets")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn unlock_wrong_password_returns_401() {
+    let (state, _tmp) = test_state_unlocked();
+
+    // Lock first.
+    let app = test_router(state.clone());
+    app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/secrets/lock")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    // Wrong password.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/unlock")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"password": "wrong"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn unlock_not_initialized_returns_503() {
+    let (state, _tmp) = test_state_locked();
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/unlock")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"password": "x"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // ---------------------------------------------------------------------------
-// CRUD operations
+// CRUD operations (with unlocked store)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn create_and_list_secrets() {
-    let state = test_state_with_secrets();
+    let (state, _tmp) = test_state_unlocked();
     let app = test_router(state.clone());
 
     // Create a secret.
@@ -126,7 +361,7 @@ async fn create_and_list_secrets() {
 
 #[tokio::test]
 async fn create_secret_with_environment() {
-    let state = test_state_with_secrets();
+    let (state, _tmp) = test_state_unlocked();
     let app = test_router(state.clone());
 
     // Create default secret.
@@ -184,7 +419,7 @@ async fn create_secret_with_environment() {
 
 #[tokio::test]
 async fn delete_secret() {
-    let state = test_state_with_secrets();
+    let (state, _tmp) = test_state_unlocked();
 
     // Create.
     let app = test_router(state.clone());
@@ -232,7 +467,7 @@ async fn delete_secret() {
 
 #[tokio::test]
 async fn delete_nonexistent_secret_returns_404() {
-    let state = test_state_with_secrets();
+    let (state, _tmp) = test_state_unlocked();
     let app = test_router(state);
     let resp = app
         .oneshot(
@@ -249,7 +484,7 @@ async fn delete_nonexistent_secret_returns_404() {
 
 #[tokio::test]
 async fn environments_for_nonexistent_secret_returns_404() {
-    let state = test_state_with_secrets();
+    let (state, _tmp) = test_state_unlocked();
     let app = test_router(state);
     let resp = app
         .oneshot(
@@ -265,7 +500,7 @@ async fn environments_for_nonexistent_secret_returns_404() {
 
 #[tokio::test]
 async fn create_secret_empty_name_returns_400() {
-    let state = test_state_with_secrets();
+    let (state, _tmp) = test_state_unlocked();
     let app = test_router(state);
     let resp = app
         .oneshot(
@@ -279,4 +514,52 @@ async fn create_secret_empty_name_returns_400() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unlock_rate_limit_after_5_attempts() {
+    let (state, _tmp) = test_state_unlocked();
+
+    // Lock first.
+    {
+        let mut session = state.secret_session.lock().unwrap();
+        session.lock();
+    }
+
+    // Make 5 wrong attempts.
+    for _ in 0..5 {
+        let app = test_router(state.clone());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/secrets/unlock")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"password": "wrong"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // These should return 401 (wrong password).
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // 6th attempt should be rate-limited.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/secrets/unlock")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"password": "test-password"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }

@@ -258,13 +258,38 @@ function RunButton() {
 // Toolbar
 // ---------------------------------------------------------------------------
 
-export function CanvasToolbar() {
+// ---------------------------------------------------------------------------
+// Secrets Button
+// ---------------------------------------------------------------------------
+
+function SecretsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      className="toolbar-secrets"
+      onClick={onClick}
+      title="Manage secrets"
+    >
+      Secrets
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar
+// ---------------------------------------------------------------------------
+
+export function CanvasToolbar({
+  onSecretsClick,
+}: {
+  onSecretsClick?: () => void;
+}) {
   return (
     <div className="canvas-toolbar">
       <PipelineSelector />
       <div className="canvas-toolbar__separator" />
       <EnvironmentSelector />
       <div className="canvas-toolbar__spacer" />
+      {onSecretsClick && <SecretsButton onClick={onSecretsClick} />}
       <RunButton />
     </div>
   );

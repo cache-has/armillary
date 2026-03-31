@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Secrets management API routes.
+//!
+//! Provides endpoints for secret store lifecycle (init, unlock, lock, status)
+//! and CRUD operations on secrets. Secret values are never returned by any
+//! endpoint.
 
 use crate::api::ApiError;
 use crate::state::AppState;
@@ -9,14 +13,17 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get};
-use flux_secrets::{SecretError, SecretStore};
+use axum::routing::{delete, get, post};
+use flux_secrets::SecretError;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
 
 /// Build the `/secrets` sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/status", get(status))
+        .route("/init", post(init_store))
+        .route("/unlock", post(unlock))
+        .route("/lock", post(lock))
         .route("/", get(list_secrets).post(create_or_update_secret))
         .route("/{name}", delete(delete_secret))
         .route("/{name}/environments", get(list_secret_environments))
@@ -25,6 +32,23 @@ pub fn router() -> Router<AppState> {
 // ---------------------------------------------------------------------------
 // Request/Response types
 // ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct StatusResponse {
+    initialized: bool,
+    unlocked: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct InitRequest {
+    password: String,
+    confirm: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UnlockRequest {
+    password: String,
+}
 
 #[derive(Debug, Serialize)]
 struct SecretMetadataResponse {
@@ -54,23 +78,14 @@ struct SecretEnvironmentsResponse {
     environments: Vec<SecretEnvironmentEntry>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DeleteSecretQuery {
+    environment: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn require_store(
-    store: &Option<Arc<Mutex<SecretStore>>>,
-) -> Result<Arc<Mutex<SecretStore>>, (StatusCode, Json<ApiError>)> {
-    store.clone().ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ApiError::with_details(
-                "secret store not available",
-                "Set HORIZON_FLUX_SECRET_PASSWORD or run `horizon-flux secret init` first",
-            )),
-        )
-    })
-}
 
 fn map_secret_error(e: SecretError, name: &str) -> (StatusCode, Json<ApiError>) {
     match &e {
@@ -79,24 +94,137 @@ fn map_secret_error(e: SecretError, name: &str) -> (StatusCode, Json<ApiError>) 
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ApiError::new(e.to_string())),
         ),
+        SecretError::AlreadyInitialized => ApiError::conflict(e.to_string()),
+        SecretError::Decryption(_) => (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError::new("incorrect password")),
+        ),
         _ => ApiError::internal(e.to_string()),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Session lifecycle handlers
+// ---------------------------------------------------------------------------
+
+/// `GET /api/secrets/status` — check if the store is initialized and/or unlocked.
+async fn status(
+    State(state): State<AppState>,
+) -> Result<Json<StatusResponse>, (StatusCode, Json<ApiError>)> {
+    let session = state
+        .secret_session
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    Ok(Json(StatusResponse {
+        initialized: session.is_initialized(),
+        unlocked: session.is_unlocked(),
+    }))
+}
+
+/// `POST /api/secrets/init` — initialize a new secret store.
+async fn init_store(
+    State(state): State<AppState>,
+    Json(req): Json<InitRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiError>)> {
+    if req.password.is_empty() {
+        return Err(ApiError::bad_request("password must not be empty"));
+    }
+    if req.password != req.confirm {
+        return Err(ApiError::bad_request("passwords do not match"));
+    }
+
+    let mut session = state
+        .secret_session
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    session
+        .init(req.password.as_bytes())
+        .map_err(|e| map_secret_error(e, ""))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "initialized": true })),
+    ))
+}
+
+/// `POST /api/secrets/unlock` — unlock the store with a password.
+async fn unlock(
+    State(state): State<AppState>,
+    Json(req): Json<UnlockRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let mut session = state
+        .secret_session
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    if !session.is_initialized() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::with_details(
+                "secret store not initialized",
+                "Initialize the store first via POST /api/secrets/init",
+            )),
+        ));
+    }
+
+    if !session.check_rate_limit() {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ApiError::new(
+                "too many unlock attempts — try again in a minute",
+            )),
+        ));
+    }
+
+    session.record_attempt();
+
+    session
+        .unlock(req.password.as_bytes())
+        .map_err(|e| map_secret_error(e, ""))?;
+
+    Ok(Json(serde_json::json!({ "unlocked": true })))
+}
+
+/// `POST /api/secrets/lock` — explicitly lock the store.
+async fn lock(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let mut session = state
+        .secret_session
+        .lock()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    session.lock();
+
+    Ok(Json(serde_json::json!({ "locked": true })))
+}
+
+// ---------------------------------------------------------------------------
+// CRUD handlers
 // ---------------------------------------------------------------------------
 
 /// `GET /api/secrets` — list secret names and metadata (never values).
 async fn list_secrets(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SecretMetadataResponse>>, (StatusCode, Json<ApiError>)> {
-    let store = require_store(&state.secret_store)?;
-    let guard = store
+    let mut session = state
+        .secret_session
         .lock()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let secrets = guard
+    let store = session.get_store().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError::with_details(
+                "secret store is locked",
+                "Unlock the store first via POST /api/secrets/unlock",
+            )),
+        )
+    })?;
+
+    let secrets = store
         .list()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -125,12 +253,22 @@ async fn create_or_update_secret(
         return Err(ApiError::bad_request("secret value must not be empty"));
     }
 
-    let store = require_store(&state.secret_store)?;
-    let guard = store
+    let mut session = state
+        .secret_session
         .lock()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    guard
+    let store = session.get_store().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError::with_details(
+                "secret store is locked",
+                "Unlock the store first via POST /api/secrets/unlock",
+            )),
+        )
+    })?;
+
+    store
         .set(&req.name, req.value.as_bytes(), req.environment.as_deref())
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -138,43 +276,54 @@ async fn create_or_update_secret(
 }
 
 /// `DELETE /api/secrets/:name` — delete a secret.
-///
-/// Deletes the default (unscoped) entry. To delete an environment-specific
-/// override, use `DELETE /api/secrets/:name?environment=staging`.
 async fn delete_secret(
     State(state): State<AppState>,
     Path(name): Path<String>,
     axum::extract::Query(params): axum::extract::Query<DeleteSecretQuery>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    let store = require_store(&state.secret_store)?;
-    let guard = store
+    let mut session = state
+        .secret_session
         .lock()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    guard
+    let store = session.get_store().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError::with_details(
+                "secret store is locked",
+                "Unlock the store first via POST /api/secrets/unlock",
+            )),
+        )
+    })?;
+
+    store
         .delete(&name, params.environment.as_deref())
         .map_err(|e| map_secret_error(e, &name))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Debug, Deserialize)]
-struct DeleteSecretQuery {
-    environment: Option<String>,
-}
-
-/// `GET /api/secrets/:name/environments` — list which environments have overrides
-/// for this secret.
+/// `GET /api/secrets/:name/environments` — list which environments have overrides.
 async fn list_secret_environments(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<SecretEnvironmentsResponse>, (StatusCode, Json<ApiError>)> {
-    let store = require_store(&state.secret_store)?;
-    let guard = store
+    let mut session = state
+        .secret_session
         .lock()
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let all = guard
+    let store = session.get_store().ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError::with_details(
+                "secret store is locked",
+                "Unlock the store first via POST /api/secrets/unlock",
+            )),
+        )
+    })?;
+
+    let all = store
         .list()
         .map_err(|e| ApiError::internal(e.to_string()))?;
     let entries: Vec<SecretEnvironmentEntry> = all

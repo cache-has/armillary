@@ -324,8 +324,7 @@ mod tests {
 
     #[test]
     fn parse_s3_url_with_partitioned_glob() {
-        let url =
-            parse_cloud_url("s3://my-bucket/data/year=2026/month=03/*.parquet").unwrap();
+        let url = parse_cloud_url("s3://my-bucket/data/year=2026/month=03/*.parquet").unwrap();
         assert_eq!(url.bucket, "my-bucket");
         assert_eq!(url.object_path, "data/year=2026/month=03/*.parquet");
         assert_eq!(url.base_url.as_str(), "s3://my-bucket");

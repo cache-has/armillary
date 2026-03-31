@@ -6,6 +6,7 @@ import Editor from '@monaco-editor/react';
 import type { ApiNode, ApiPreviewNodeResponse } from '../../api/pipelines';
 import { previewNode } from '../../api/pipelines';
 import { StorageOptionsEditor } from './StorageOptionsEditor';
+import { SecretPicker } from './SecretPicker';
 import './connector-editor.css';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,7 @@ function PostgresSourceForm({
   onChange: (config: Record<string, unknown>) => void;
 }) {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showSecretPicker, setShowSecretPicker] = useState(false);
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
   const handleTestConnection = useCallback(async () => {
@@ -55,8 +57,17 @@ function PostgresSourceForm({
     <>
       <div className="connector-editor__section">
         <div className="connector-editor__section-title">Connection</div>
-        <div className="connector-editor__field">
-          <label className="connector-editor__label">Connection String</label>
+        <div className="connector-editor__field connector-editor__field-with-secret">
+          <div className="connector-editor__label-row">
+            <label className="connector-editor__label">Connection String</label>
+            <button
+              className="connector-editor__secret-btn"
+              type="button"
+              onClick={() => setShowSecretPicker((v) => !v)}
+            >
+              Use Secret
+            </button>
+          </div>
           <input
             className="connector-editor__input"
             type="password"
@@ -64,6 +75,15 @@ function PostgresSourceForm({
             onChange={(e) => onChange({ ...config, connection_string: e.target.value })}
             placeholder="postgres://user:pass@host:5432/db"
           />
+          {showSecretPicker && (
+            <SecretPicker
+              onSelect={(tpl) => {
+                onChange({ ...config, connection_string: tpl });
+                setShowSecretPicker(false);
+              }}
+              onClose={() => setShowSecretPicker(false)}
+            />
+          )}
         </div>
         <button className="connector-editor__test-btn" onClick={handleTestConnection}>
           Test Connection
@@ -172,6 +192,8 @@ function RestSourceForm({
   config: Record<string, unknown>;
   onChange: (config: Record<string, unknown>) => void;
 }) {
+  const [showSecretPicker, setShowSecretPicker] = useState(false);
+
   return (
     <div className="connector-editor__section">
       <div className="connector-editor__section-title">REST API</div>
@@ -209,8 +231,17 @@ function RestSourceForm({
           </select>
         </div>
       </div>
-      <div className="connector-editor__field">
-        <label className="connector-editor__label">Headers (JSON)</label>
+      <div className="connector-editor__field connector-editor__field-with-secret">
+        <div className="connector-editor__label-row">
+          <label className="connector-editor__label">Headers (JSON)</label>
+          <button
+            className="connector-editor__secret-btn"
+            type="button"
+            onClick={() => setShowSecretPicker((v) => !v)}
+          >
+            Use Secret
+          </button>
+        </div>
         <input
           className="connector-editor__input"
           type="text"
@@ -218,6 +249,20 @@ function RestSourceForm({
           onChange={(e) => onChange({ ...config, headers: e.target.value })}
           placeholder='{"Authorization": "Bearer ..."}'
         />
+        {showSecretPicker && (
+          <SecretPicker
+            onSelect={(tpl) => {
+              // For headers, insert the secret template as a Bearer token value
+              const current = String(config.headers ?? '{}');
+              const asAuth = `{"Authorization": "Bearer ${tpl}"}`;
+              // If headers is empty/default, replace entirely; otherwise append the template
+              const updated = current === '{}' || current === '' ? asAuth : current;
+              onChange({ ...config, headers: updated });
+              setShowSecretPicker(false);
+            }}
+            onClose={() => setShowSecretPicker(false)}
+          />
+        )}
       </div>
     </div>
   );
