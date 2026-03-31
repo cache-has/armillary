@@ -193,5 +193,5 @@ async fn test_source_connector_with_bad_config() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["success"], false);
-    assert!(body["error"].as_str().unwrap().len() > 0);
+    assert!(!body["error"].as_str().unwrap().is_empty());
 }

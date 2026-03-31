@@ -48,7 +48,7 @@ mod tests {
         let (listener, port) = find_and_bind(LOCALHOST, 18080, 18180)
             .await
             .expect("should find a port");
-        assert!(port >= 18080 && port < 18180);
+        assert!((18080..18180).contains(&port));
         drop(listener);
     }
 

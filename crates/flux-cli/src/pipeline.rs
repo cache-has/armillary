@@ -773,6 +773,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn vars_to_map_parses_numbers() {
         let vars = vec![
             ("count".into(), "42".into()),

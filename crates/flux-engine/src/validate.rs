@@ -199,6 +199,7 @@ mod tests {
             "ratio".into(),
             Variable {
                 var_type: VariableType::Float,
+                #[allow(clippy::approx_constant)]
                 default: Some(serde_json::json!(3.14)),
             },
         );

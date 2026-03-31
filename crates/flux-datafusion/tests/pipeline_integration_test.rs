@@ -207,7 +207,10 @@ async fn csv_source_sql_transform_parquet_sink() {
         "csv_to_parquet",
         vec![
             csv_source_node("src", &input),
-            sql_node("xform", "SELECT id, name, CAST(score AS DOUBLE) AS score FROM src"),
+            sql_node(
+                "xform",
+                "SELECT id, name, CAST(score AS DOUBLE) AS score FROM src",
+            ),
             parquet_sink_node("sink", output.to_str().unwrap()),
         ],
         vec![Edge::new("src", "xform"), Edge::new("xform", "sink")],
@@ -224,8 +227,8 @@ async fn csv_source_sql_transform_parquet_sink() {
     // Read back the Parquet file and verify
     assert!(output.exists());
     let file = std::fs::File::open(&output).unwrap();
-    let reader = parquet::arrow::arrow_reader::ParquetRecordBatchReader::try_new(file, 1024)
-        .unwrap();
+    let reader =
+        parquet::arrow::arrow_reader::ParquetRecordBatchReader::try_new(file, 1024).unwrap();
     let batches: Vec<RecordBatch> = reader.collect::<Result<_, _>>().unwrap();
     let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     assert_eq!(total_rows, 3);
@@ -241,7 +244,10 @@ async fn parquet_source_sql_transform_csv_sink() {
         "parquet_to_csv",
         vec![
             parquet_source_node("src", &input),
-            sql_node("xform", "SELECT name, score * 2 AS doubled FROM src ORDER BY name"),
+            sql_node(
+                "xform",
+                "SELECT name, score * 2 AS doubled FROM src ORDER BY name",
+            ),
             csv_sink_node("sink", output.to_str().unwrap()),
         ],
         vec![Edge::new("src", "xform"), Edge::new("xform", "sink")],
@@ -275,7 +281,10 @@ async fn chained_sql_transforms() {
         vec![
             csv_source_node("src", &input),
             sql_node("filter", "SELECT * FROM src WHERE score >= 87"),
-            sql_node("project", "SELECT name, score FROM filter ORDER BY score DESC"),
+            sql_node(
+                "project",
+                "SELECT name, score FROM filter ORDER BY score DESC",
+            ),
             csv_sink_node("sink", output.to_str().unwrap()),
         ],
         vec![
@@ -322,8 +331,14 @@ async fn fan_out_one_source_two_transforms_two_sinks() {
         "fan_out",
         vec![
             csv_source_node("src", &input),
-            sql_node("high_filter", "SELECT name, score FROM src WHERE score > 90"),
-            sql_node("low_filter", "SELECT name, score FROM src WHERE score <= 90"),
+            sql_node(
+                "high_filter",
+                "SELECT name, score FROM src WHERE score > 90",
+            ),
+            sql_node(
+                "low_filter",
+                "SELECT name, score FROM src WHERE score <= 90",
+            ),
             csv_sink_node("high_sink", output_high.to_str().unwrap()),
             csv_sink_node("low_sink", output_low.to_str().unwrap()),
         ],
@@ -360,11 +375,7 @@ async fn fan_out_one_source_two_transforms_two_sinks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fan_in_two_sources_join_to_sink() {
     let dir = TempDir::new().unwrap();
-    let users_path = write_csv(
-        &dir,
-        "users.csv",
-        "user_id,name\n1,Alice\n2,Bob\n3,Carol\n",
-    );
+    let users_path = write_csv(&dir, "users.csv", "user_id,name\n1,Alice\n2,Bob\n3,Carol\n");
     let scores_path = write_csv(
         &dir,
         "scores.csv",
@@ -401,7 +412,11 @@ async fn fan_in_two_sources_join_to_sink() {
     assert_eq!(run.status, RunStatus::Success);
 
     // Join produces 3 rows (all match)
-    let join_stats = result.node_stats.iter().find(|s| s.node_id.0 == "joined").unwrap();
+    let join_stats = result
+        .node_stats
+        .iter()
+        .find(|s| s.node_id.0 == "joined")
+        .unwrap();
     assert_eq!(join_stats.rows_out, 3);
 
     let content = std::fs::read_to_string(&output).unwrap();
@@ -455,7 +470,11 @@ async fn diamond_pattern_source_two_transforms_merge_sink() {
     assert_eq!(run.status, RunStatus::Success);
 
     // Merge should produce 3 rows
-    let merge_stats = result.node_stats.iter().find(|s| s.node_id.0 == "merge").unwrap();
+    let merge_stats = result
+        .node_stats
+        .iter()
+        .find(|s| s.node_id.0 == "merge")
+        .unwrap();
     assert_eq!(merge_stats.rows_out, 3);
 
     let content = std::fs::read_to_string(&output).unwrap();
