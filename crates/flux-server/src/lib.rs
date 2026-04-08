@@ -18,7 +18,7 @@ pub mod static_files;
 pub mod ws;
 
 pub use error::ServerError;
-pub use state::AppState;
+pub use state::{AppState, PluginEvent};
 
 use std::net::IpAddr;
 use std::process;

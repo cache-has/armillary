@@ -26,6 +26,7 @@ fn test_state() -> AppState {
             flux_server::state::SecretSession::new(std::env::temp_dir().join("unused-secrets.db")),
         )),
         event_tx: AppState::new_event_channel(),
+        plugin_event_tx: AppState::new_plugin_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
         session_factory: None,
         metadata_info: flux_server::state::MetadataInfo {

@@ -23,7 +23,7 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::api::ApiError;
-use crate::state::AppState;
+use crate::state::{AppState, PluginEvent};
 
 #[derive(Debug, Serialize)]
 struct PluginListResponse {
@@ -101,11 +101,25 @@ async fn reload_plugins(State(state): State<AppState>) -> impl IntoResponse {
     info!("reloading plugin registry");
     let new_registry = Arc::new(discover_plugins(&state.plugin_cwd));
     let count = new_registry.len();
+    let (ok_count, invalid_count) = new_registry.iter().fold((0, 0), |(ok, inv), p| {
+        match p.status {
+            PluginStatus::Ok => (ok + 1, inv),
+            PluginStatus::Invalid { .. } => (ok, inv + 1),
+        }
+    });
     {
         let mut guard = state.plugin_registry.write().expect("plugin registry poisoned");
         *guard = new_registry;
     }
-    Json(serde_json::json!({ "reloaded": true, "count": count }))
+    // Best-effort broadcast — no subscribers is fine.
+    let _ = state.plugin_event_tx.send(PluginEvent::PluginRegistryReloaded {
+        count,
+        ok_count,
+        invalid_count,
+    });
+    Json(
+        serde_json::json!({ "reloaded": true, "count": count, "ok_count": ok_count, "invalid_count": invalid_count }),
+    )
 }
 
 pub fn router() -> Router<AppState> {

@@ -34,10 +34,31 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     debug!("WebSocket client connected");
     let mut rx = state.event_tx.subscribe();
+    let mut plugin_rx = state.plugin_event_tx.subscribe();
     let mut filter: Option<HashSet<RunId>> = None;
 
     loop {
         tokio::select! {
+            // Plugin lifecycle events. Not subject to run-id filtering.
+            result = plugin_rx.recv() => {
+                match result {
+                    Ok(event) => {
+                        match serde_json::to_string(&event) {
+                            Ok(json) => {
+                                if socket.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => warn!("Failed to serialize plugin event: {e}"),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WebSocket client lagged, dropped {n} plugin events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+
             // Receive events from the broadcast channel and forward to client.
             result = rx.recv() => {
                 match result {

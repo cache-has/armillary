@@ -21,6 +21,30 @@ use tokio::sync::broadcast;
 /// Default capacity for the execution event broadcast channel.
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
+/// Capacity for the plugin lifecycle event broadcast channel. Plugin events
+/// are infrequent (only fire on discovery / reload), so a small buffer is
+/// plenty.
+const PLUGIN_EVENT_CHANNEL_CAPACITY: usize = 16;
+
+/// Plugin lifecycle events broadcast over the WebSocket so the frontend can
+/// react to install/reload without polling.
+///
+/// Serialized with a `type` tag matching the snake_case variant name, e.g.
+/// `{"type":"plugin_registry_reloaded","count":3,"ok_count":3,"invalid_count":0}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PluginEvent {
+    /// The plugin registry has been (re)scanned and swapped in.
+    PluginRegistryReloaded {
+        /// Total number of plugins discovered.
+        count: usize,
+        /// Number with `status: ok`.
+        ok_count: usize,
+        /// Number with `status: invalid`.
+        invalid_count: usize,
+    },
+}
+
 /// How long the secret store stays unlocked without activity (30 minutes).
 const SECRET_AUTO_LOCK_SECS: u64 = 30 * 60;
 
@@ -209,6 +233,10 @@ pub struct AppState {
     /// Broadcast channel for real-time execution events (WebSocket consumers
     /// subscribe via `event_tx.subscribe()`).
     pub event_tx: broadcast::Sender<ExecutionEvent>,
+    /// Broadcast channel for plugin lifecycle events (registry reloads,
+    /// status transitions). WebSocket clients receive these alongside
+    /// [`ExecutionEvent`]s on `/ws`.
+    pub plugin_event_tx: broadcast::Sender<PluginEvent>,
     /// On-disk cache for materialized node outputs (preview reads from here).
     pub output_cache: Arc<OutputCache>,
     /// Shared DataFusion session factory with memory pool and spill-to-disk.
@@ -229,6 +257,11 @@ impl AppState {
     /// Create a new broadcast sender for execution events.
     pub fn new_event_channel() -> broadcast::Sender<ExecutionEvent> {
         broadcast::channel(EVENT_CHANNEL_CAPACITY).0
+    }
+
+    /// Create a new broadcast sender for plugin lifecycle events.
+    pub fn new_plugin_event_channel() -> broadcast::Sender<PluginEvent> {
+        broadcast::channel(PLUGIN_EVENT_CHANNEL_CAPACITY).0
     }
 
     /// Build a [`SecretResolver`] backed by the current secret session.

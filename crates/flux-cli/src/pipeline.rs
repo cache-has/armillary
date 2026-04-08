@@ -56,7 +56,13 @@ fn open_stores(metadata_url: Option<&str>) -> Result<Stores> {
     let backend = crate::config::MetadataBackend::resolve(metadata_url, &data_dir)?;
     let meta = crate::config::open_stores(&backend, &data_dir)?;
 
-    let connector_registry = flux_connectors::default_registry();
+    // Discover installed plugins and register their sink types alongside
+    // the built-in connectors. Without this, `flux run` would reject any
+    // pipeline that uses a plugin sink with "connector ... not registered"
+    // — only `flux plugin list/check` would see plugins, not `flux run`.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let plugin_registry = std::sync::Arc::new(flux_plugin_host::discover_plugins(&cwd));
+    let connector_registry = flux_connectors::default_registry_with_plugins(plugin_registry);
     let output_cache = flux_datafusion::OutputCache::new(&data_dir);
 
     Ok(Stores {

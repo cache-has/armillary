@@ -8,6 +8,7 @@
 
 import { useEffect, useRef } from 'react';
 import { usePipelineStore } from '../stores/pipelineStore';
+import { usePluginStore } from '../stores/pluginStore';
 
 /** Matches the backend's ExecutionEvent variants (serialized as tagged JSON). */
 interface NodeStartedEvent {
@@ -44,12 +45,20 @@ interface RunStartedEvent {
   pipeline_name: string;
 }
 
+interface PluginRegistryReloadedEvent {
+  type: 'plugin_registry_reloaded';
+  count: number;
+  ok_count: number;
+  invalid_count: number;
+}
+
 type ExecutionEvent =
   | RunStartedEvent
   | NodeStartedEvent
   | NodeCompletedEvent
   | NodeFailedEvent
-  | RunCompletedEvent;
+  | RunCompletedEvent
+  | PluginRegistryReloadedEvent;
 
 export function useExecutionEvents() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -88,6 +97,12 @@ export function useExecutionEvents() {
               // Leave node statuses as-is (success/error) so user can see results.
               // Signal that run data is fresh so side panel re-fetches stats.
               store.notifyRunCompleted();
+              break;
+            case 'plugin_registry_reloaded':
+              // Push notification: refresh the plugin list so the canvas
+              // (NodePalette / PluginsPanel) reflects the new registry without
+              // requiring the user to reopen the panel.
+              void usePluginStore.getState().fetchPlugins();
               break;
           }
         } catch {

@@ -59,6 +59,7 @@ fn state_with_registry(cwd: std::path::PathBuf, registry: PluginRegistry) -> App
             flux_server::state::SecretSession::new(std::env::temp_dir().join("unused-secrets.db")),
         )),
         event_tx: AppState::new_event_channel(),
+        plugin_event_tx: AppState::new_plugin_event_channel(),
         output_cache: Arc::new(flux_datafusion::OutputCache::new(std::env::temp_dir())),
         session_factory: None,
         metadata_info: flux_server::state::MetadataInfo {
@@ -190,4 +191,38 @@ async fn reload_picks_up_new_plugin() {
         .unwrap();
     let body2 = body_json(resp2.into_body()).await;
     assert_eq!(body2["plugins"][0]["name"], "beta");
+}
+
+#[tokio::test]
+async fn reload_broadcasts_plugin_event() {
+    let cwd = tempfile::tempdir().unwrap();
+    let plugins_dir = cwd.path().join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    let state = state_with_registry(cwd.path().to_path_buf(), PluginRegistry::default());
+    let mut rx = state.plugin_event_tx.subscribe();
+    let app = router(state);
+
+    write_plugin(&plugins_dir, "gamma", "gamma_sink");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/plugins/reload")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let event = rx
+        .try_recv()
+        .expect("plugin event should have been broadcast");
+    let json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["type"], "plugin_registry_reloaded");
+    // The test plugin we just wrote should be present; other plugins may be
+    // discovered from system dirs depending on the developer's environment,
+    // so just assert "at least one" rather than exact counts.
+    assert!(json["count"].as_u64().unwrap() >= 1);
+    assert!(json["ok_count"].as_u64().unwrap() >= 1);
 }

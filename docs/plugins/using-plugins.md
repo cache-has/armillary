@@ -77,14 +77,37 @@ need to restart flux during development.
 | Pipeline fails with "Configure rejected" | Plugin refused the upstream Arrow schema or config | Check the plugin's stderr in flux logs for the rejection reason |
 | Pipeline fails with "transport closed" | Plugin crashed mid-stream | Inspect plugin stderr; reproduce manually with `flux plugin check` |
 | Schema form is empty / shows raw JSON | `config_schema.json` missing or unreadable from the plugin directory | Add or fix the schema file referenced by the manifest |
+| "node: command not found" or plugin spawn fails immediately | Plugin requires a Node.js runtime that isn't on `PATH` (e.g. the OpenBoard plugin) | Install Node.js 18+ and re-run; verify with `node --version` from the same shell that launches flux |
+| "IO Error: Could not set lock on file" / "database is locked" | Target DuckDB file is held open by another process (commonly an `openboard dev` server) | Stop the dev server (or any other reader), re-run the pipeline, then restart the dev server |
+| "Permission denied" when the plugin writes its target file | The plugin process can't write to the configured output path or its parent directory | Ensure the directory exists and is writable by the user running flux; on macOS, grant Full Disk Access if writing under a protected location |
+| Stale `*.staging-*.duckdb` files left behind | Plugin was killed mid-run before commit | Safe to delete manually; the OpenBoard plugin also sweeps orphans on its next run |
 
 Plugin `Log` messages and stderr are both forwarded into flux's `tracing`
 infrastructure, so `RUST_LOG=horizon_flux=debug` will show plugin diagnostics
 inline with host logs.
 
-## Reference plugin
+## Reference plugins
 
-A working reference plugin lives at `examples/plugins/parquet-plugin/` in the
-flux repository. It's a small standalone Rust binary that writes incoming
-batches to a Parquet file and is the canonical example to copy when authoring
-a new plugin.
+Two reference plugins are maintained alongside flux:
+
+- **`examples/plugins/parquet-plugin/`** (in this repo) — a small standalone
+  Rust binary that writes incoming batches to a Parquet file. Use this as the
+  minimal "hello world" of the plugin protocol: a single source file, no
+  external dependencies beyond Arrow and the protocol crate.
+- **OpenBoard plugin** — a Node.js sink that materializes pipeline output into
+  a DuckDB file and registers it with an [OpenBoard](https://github.com/horizon-analytic/openboard)
+  project so dashboards can query it directly. It lives in the openboard repo
+  at `plugins/flux/` and ships as a separate release. This is the **canonical
+  example** for plugin authors: it exercises every part of the v1 protocol
+  (handshake, configure, streamed Arrow batches, commit, abort, error frames),
+  implements transactional staging-and-rename semantics, validates incoming
+  schemas against an existing target, and includes both unit and end-to-end
+  subprocess tests. Third-party plugin authors are encouraged to read it
+  before starting a new plugin — the file layout, manifest, config schema,
+  and test harness are all directly reusable as a template, regardless of
+  whether the new plugin is written in Node, Rust, Python, or anything else
+  that can speak the wire protocol over stdio.
+
+For the joint Postgres → Flux → OpenBoard tutorial, see
+`openboard/docs/tutorials/flux-postgres-to-dashboard.md` in the openboard
+repo.

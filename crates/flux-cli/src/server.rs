@@ -138,6 +138,7 @@ pub fn start(
         environment_store,
         secret_session: Arc::new(std::sync::Mutex::new(secret_session)),
         event_tx,
+        plugin_event_tx: flux_server::AppState::new_plugin_event_channel(),
         output_cache,
         session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
         metadata_info,
