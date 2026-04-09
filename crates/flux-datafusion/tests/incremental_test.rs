@@ -102,6 +102,11 @@ fn incremental_pipeline() -> Pipeline {
         sample_config: None,
         cache_row_limit: None,
         code_dir: None,
+        udfs_dir: None,
+        snippets_dir: None,
+        snippet: None,
+        params: BTreeMap::new(),
+        outputs: Vec::new(),
         nodes: vec![
             Node {
                 id: NodeId::new("src"),
@@ -113,6 +118,8 @@ fn incremental_pipeline() -> Pipeline {
                 }),
                 position: Position::default(),
                 pinned_position: false,
+                snippet_parent: None,
+                snippet_name: None,
             },
             Node {
                 id: NodeId::new("sink"),
@@ -132,6 +139,8 @@ fn incremental_pipeline() -> Pipeline {
                 }),
                 position: Position::default(),
                 pinned_position: false,
+                snippet_parent: None,
+                snippet_name: None,
             },
         ],
         edges: vec![Edge::new("src", "sink")],
@@ -326,6 +335,11 @@ fn pipeline_with_policy(policy: MaterializationPolicy) -> Pipeline {
         sample_config: None,
         cache_row_limit: None,
         code_dir: None,
+        udfs_dir: None,
+        snippets_dir: None,
+        snippet: None,
+        params: BTreeMap::new(),
+        outputs: Vec::new(),
         nodes: vec![
             Node {
                 id: NodeId::new("src"),
@@ -337,6 +351,8 @@ fn pipeline_with_policy(policy: MaterializationPolicy) -> Pipeline {
                 }),
                 position: Position::default(),
                 pinned_position: false,
+                snippet_parent: None,
+                snippet_name: None,
             },
             Node {
                 id: NodeId::new("sink"),
@@ -348,6 +364,8 @@ fn pipeline_with_policy(policy: MaterializationPolicy) -> Pipeline {
                 }),
                 position: Position::default(),
                 pinned_position: false,
+                snippet_parent: None,
+                snippet_name: None,
             },
         ],
         edges: vec![Edge::new("src", "sink")],

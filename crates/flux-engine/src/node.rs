@@ -2,8 +2,66 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::materialization::MaterializationPolicy;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::fmt;
+
+/// Severity level for a test node. Controls whether a failing assertion
+/// stops the pipeline or merely emits a warning.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestSeverity {
+    /// A failing assertion fails the pipeline (default).
+    #[default]
+    Error,
+    /// A failing assertion logs a warning but the pipeline continues.
+    Warn,
+}
+
+/// A single data assertion applied to the upstream input of a test node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Assertion {
+    /// One or more columns must contain no nulls.
+    NotNull { columns: Vec<String> },
+    /// Column or composite key must be unique across all rows.
+    Unique { columns: Vec<String> },
+    /// Column values must be in a provided set.
+    AcceptedValues {
+        column: String,
+        values: Vec<serde_json::Value>,
+    },
+    /// Total row count must fall in `[min, max]`.
+    RowCountBetween { min: u64, max: u64 },
+    /// Total row count must equal a fixed number.
+    RowCountEqualTo { count: u64 },
+    /// Entire rows must be unique (all columns considered).
+    NoDuplicates,
+    /// String column must match a regex pattern.
+    ColumnValuesMatchRegex { column: String, pattern: String },
+    /// A SQL expression evaluated per row must be true for every row.
+    ExpressionTrue { expression: String },
+    /// Escape hatch: user-provided query returning a `failing` count.
+    /// Zero means pass.
+    Sql { name: String, query: String },
+}
+
+/// Configuration for a test node.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConfig {
+    /// Whether a failing assertion fails the pipeline or just warns.
+    #[serde(default)]
+    pub severity: TestSeverity,
+    /// List of assertions to evaluate against the upstream input.
+    pub assertions: Vec<Assertion>,
+    /// How many violating rows to include in failure reports.
+    #[serde(default = "default_max_violations")]
+    pub max_violations_reported: usize,
+}
+
+fn default_max_violations() -> usize {
+    25
+}
 
 /// Unique identifier for a node within a pipeline.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,18 +87,27 @@ impl<S: Into<String>> From<S> for NodeId {
 }
 
 /// A node in the pipeline DAG.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Serialization is custom to support the "no `type` field" wire format for
+/// snippet call sites while keeping the existing flattened tagged shape for
+/// source/transform/sink nodes (zero churn for pre-snippet pipelines).
+#[derive(Debug, Clone)]
 pub struct Node {
     pub id: NodeId,
     pub name: String,
-    #[serde(flatten)]
     pub kind: NodeKind,
     /// Canvas position for the frontend.
-    #[serde(default)]
     pub position: Position,
     /// Whether the user has pinned this node's position on the canvas.
-    #[serde(default)]
     pub pinned_position: bool,
+    /// If this node was produced by snippet expansion, the call-site ID of the
+    /// outermost snippet call it belongs to. Used by the frontend to render
+    /// snippet expansions as collapsible group nodes. Always `None` on disk;
+    /// stamped during `expand_snippets` and serialized in API responses.
+    pub snippet_parent: Option<NodeId>,
+    /// The snippet name (matches `SnippetCall.snippet`) for the outermost
+    /// snippet call this node belongs to. Sibling of `snippet_parent`.
+    pub snippet_name: Option<String>,
 }
 
 /// The type-specific configuration for a node.
@@ -50,6 +117,13 @@ pub enum NodeKind {
     Source(SourceConfig),
     Transform(TransformConfig),
     Sink(SinkConfig),
+    /// A data assertion node. Has exactly one upstream input and produces no
+    /// output data — it validates the upstream data against its assertions.
+    Test(TestConfig),
+    /// A reference to a reusable pipeline snippet. Present only between
+    /// deserialization and snippet expansion; the executor must never see this.
+    #[serde(skip)]
+    Snippet(SnippetCall),
 }
 
 impl NodeKind {
@@ -63,6 +137,156 @@ impl NodeKind {
 
     pub fn is_sink(&self) -> bool {
         matches!(self, Self::Sink(_))
+    }
+
+    pub fn is_test(&self) -> bool {
+        matches!(self, Self::Test(_))
+    }
+
+    pub fn is_snippet(&self) -> bool {
+        matches!(self, Self::Snippet(_))
+    }
+}
+
+/// A call-site reference to a reusable snippet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnippetCall {
+    /// The snippet's name (matches the snippet file's `snippet` field).
+    pub snippet: String,
+    /// Parameter values supplied at the call site.
+    #[serde(default)]
+    pub params: BTreeMap<String, serde_json::Value>,
+}
+
+// -- Custom (de)serialization for Node ---------------------------------------
+//
+// The wire format for source/transform/sink nodes uses `#[serde(flatten)]` on
+// the tagged `NodeKind` enum — emitting `{ id, name, type, ... }`. Snippet
+// call sites intentionally have NO `type` field (the `snippet` key is the
+// discriminator). We implement both traits by hand:
+//
+// * Deserialize: parse to a `Value`, check for a top-level `snippet` key, and
+//   route to either a bespoke snippet path or the existing flattened path via
+//   a private mirror struct.
+// * Serialize: for non-snippet variants, emit via the same mirror struct (so
+//   the byte output is identical to the old derived impl). For snippets,
+//   emit `{ id, name, snippet, params, position?, pinned_position? }`.
+
+#[derive(Serialize, Deserialize)]
+struct NodeWire {
+    id: NodeId,
+    name: String,
+    #[serde(flatten)]
+    kind: NodeKind,
+    #[serde(default)]
+    position: Position,
+    #[serde(default)]
+    pinned_position: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snippet_parent: Option<NodeId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snippet_name: Option<String>,
+}
+
+impl Serialize for Node {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.kind {
+            NodeKind::Snippet(call) => {
+                use serde::ser::SerializeMap;
+                let mut extra = 0;
+                if self.position.x != 0.0 || self.position.y != 0.0 {
+                    extra += 1;
+                }
+                if self.pinned_position {
+                    extra += 1;
+                }
+                let mut map = serializer.serialize_map(Some(4 + extra))?;
+                map.serialize_entry("id", &self.id)?;
+                map.serialize_entry("name", &self.name)?;
+                map.serialize_entry("snippet", &call.snippet)?;
+                map.serialize_entry("params", &call.params)?;
+                if self.position.x != 0.0 || self.position.y != 0.0 {
+                    map.serialize_entry("position", &self.position)?;
+                }
+                if self.pinned_position {
+                    map.serialize_entry("pinned_position", &true)?;
+                }
+                map.end()
+            }
+            _ => {
+                let wire = NodeWire {
+                    id: self.id.clone(),
+                    name: self.name.clone(),
+                    kind: self.kind.clone(),
+                    position: self.position,
+                    pinned_position: self.pinned_position,
+                    snippet_parent: self.snippet_parent.clone(),
+                    snippet_name: self.snippet_name.clone(),
+                };
+                wire.serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Node {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("node must be an object"))?;
+
+        if obj.contains_key("snippet") && !obj.contains_key("type") {
+            // Snippet call-site path.
+            let id: NodeId = obj
+                .get("id")
+                .cloned()
+                .ok_or_else(|| D::Error::custom("node missing `id`"))
+                .and_then(|v| serde_json::from_value(v).map_err(D::Error::custom))?;
+            let name: String = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| id.0.clone());
+            let snippet: String = obj
+                .get("snippet")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| D::Error::custom("snippet node `snippet` must be a string"))?;
+            let params: BTreeMap<String, serde_json::Value> = match obj.get("params") {
+                Some(v) => serde_json::from_value(v.clone()).map_err(D::Error::custom)?,
+                None => BTreeMap::new(),
+            };
+            let position: Position = match obj.get("position") {
+                Some(v) => serde_json::from_value(v.clone()).map_err(D::Error::custom)?,
+                None => Position::default(),
+            };
+            let pinned_position = obj
+                .get("pinned_position")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(Node {
+                id,
+                name,
+                kind: NodeKind::Snippet(SnippetCall { snippet, params }),
+                position,
+                pinned_position,
+                snippet_parent: None,
+                snippet_name: None,
+            })
+        } else {
+            let wire: NodeWire = serde_json::from_value(value).map_err(D::Error::custom)?;
+            Ok(Node {
+                id: wire.id,
+                name: wire.name,
+                kind: wire.kind,
+                position: wire.position,
+                pinned_position: wire.pinned_position,
+                snippet_parent: wire.snippet_parent,
+                snippet_name: wire.snippet_name,
+            })
+        }
     }
 }
 
@@ -244,6 +468,8 @@ mod tests {
             }),
             position: Position { x: 100.0, y: 200.5 },
             pinned_position: true,
+            snippet_parent: None,
+            snippet_name: None,
         };
         let json = serde_json::to_string(&node).unwrap();
         let node2: Node = serde_json::from_str(&json).unwrap();
@@ -264,5 +490,106 @@ mod tests {
         };
         let json = serde_json::to_value(&cfg).unwrap();
         assert!(json.get("cache_row_limit").is_none());
+    }
+
+    #[test]
+    fn test_config_serde_roundtrip() {
+        let cfg = TestConfig {
+            severity: TestSeverity::Warn,
+            assertions: vec![
+                Assertion::NotNull {
+                    columns: vec!["id".into(), "name".into()],
+                },
+                Assertion::Unique {
+                    columns: vec!["id".into()],
+                },
+                Assertion::AcceptedValues {
+                    column: "status".into(),
+                    values: vec![
+                        serde_json::Value::String("active".into()),
+                        serde_json::Value::String("inactive".into()),
+                    ],
+                },
+                Assertion::RowCountBetween { min: 1, max: 1000 },
+                Assertion::RowCountEqualTo { count: 42 },
+                Assertion::NoDuplicates,
+                Assertion::ColumnValuesMatchRegex {
+                    column: "email".into(),
+                    pattern: r"^.+@.+\..+$".into(),
+                },
+                Assertion::ExpressionTrue {
+                    expression: "amount > 0".into(),
+                },
+                Assertion::Sql {
+                    name: "custom".into(),
+                    query: "SELECT COUNT(*) AS failing FROM ${input} WHERE x < 0".into(),
+                },
+            ],
+            max_violations_reported: 10,
+        };
+        let json = serde_json::to_value(&cfg).unwrap();
+        let cfg2: TestConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg2.assertions.len(), 9);
+        assert_eq!(cfg2.severity, TestSeverity::Warn);
+        assert_eq!(cfg2.max_violations_reported, 10);
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let json = serde_json::json!({
+            "assertions": [
+                { "kind": "not_null", "columns": ["id"] }
+            ]
+        });
+        let cfg: TestConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.severity, TestSeverity::Error); // default
+        assert_eq!(cfg.max_violations_reported, 25); // default
+    }
+
+    #[test]
+    fn node_kind_test_serde() {
+        let kind = NodeKind::Test(TestConfig {
+            severity: TestSeverity::Error,
+            assertions: vec![Assertion::NotNull {
+                columns: vec!["id".into()],
+            }],
+            max_violations_reported: 25,
+        });
+        let json = serde_json::to_value(&kind).unwrap();
+        assert_eq!(json["type"], "test");
+        assert!(json["assertions"].is_array());
+
+        let kind2: NodeKind = serde_json::from_value(json).unwrap();
+        assert!(kind2.is_test());
+        assert!(!kind2.is_source());
+    }
+
+    #[test]
+    fn full_test_node_serde_roundtrip() {
+        let node = Node {
+            id: NodeId::new("validate_orders"),
+            name: "Validate Orders".into(),
+            kind: NodeKind::Test(TestConfig {
+                severity: TestSeverity::Error,
+                assertions: vec![
+                    Assertion::NotNull {
+                        columns: vec!["order_id".into()],
+                    },
+                    Assertion::Unique {
+                        columns: vec!["order_id".into()],
+                    },
+                ],
+                max_violations_reported: 25,
+            }),
+            position: Position { x: 300.0, y: 400.0 },
+            pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let node2: Node = serde_json::from_str(&json).unwrap();
+        assert_eq!(node2.id, node.id);
+        assert_eq!(node2.name, "Validate Orders");
+        assert!(node2.kind.is_test());
     }
 }

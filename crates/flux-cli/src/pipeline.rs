@@ -369,6 +369,31 @@ fn print_progress_event(event: &flux_datafusion::ExecutionEvent) {
         ExecutionEvent::NodeFailed { node_id, error, .. } => {
             eprintln!("  {} {node_id} — {error}", color::red("✗"));
         }
+        ExecutionEvent::TestNodePassed {
+            node_id,
+            assertions_count,
+            ..
+        } => {
+            eprintln!(
+                "  {} {node_id} — {assertions_count} assertion(s) passed",
+                color::green("✓")
+            );
+        }
+        ExecutionEvent::TestNodeFailed {
+            node_id,
+            severity,
+            failures,
+            ..
+        } => {
+            let marker = if *severity == flux_engine::node::TestSeverity::Warn {
+                color::yellow("⚠")
+            } else {
+                color::red("✗")
+            };
+            for f in failures {
+                eprintln!("  {marker} {node_id} — {f}");
+            }
+        }
         ExecutionEvent::RunCompleted {
             status,
             duration_ms,
@@ -499,6 +524,16 @@ pub fn show(pipeline_name: &str, format: OutputFormat, metadata_url: Option<&str
                     }
                     flux_engine::NodeKind::Sink(cfg) => {
                         format!("sink ({})", cfg.connector)
+                    }
+                    flux_engine::NodeKind::Test(cfg) => {
+                        format!(
+                            "test ({} assertions, {:?})",
+                            cfg.assertions.len(),
+                            cfg.severity
+                        )
+                    }
+                    flux_engine::NodeKind::Snippet(call) => {
+                        format!("snippet ({})", call.snippet)
                     }
                 };
                 println!("  {} — {}", node.name, kind_str);
@@ -754,6 +789,365 @@ fn batches_to_json_rows(batches: &[arrow::array::RecordBatch]) -> Vec<serde_json
         .filter(|line| !line.is_empty())
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// `flux test`
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub fn test(
+    pipeline_name: Option<&str>,
+    env: Option<&str>,
+    vars: Vec<(String, String)>,
+    node_filter: Option<&str>,
+    all: bool,
+    format: OutputFormat,
+    metadata_url: Option<&str>,
+) -> Result<()> {
+    let stores = open_stores(metadata_url)?;
+
+    let records: Vec<flux_engine::PipelineRecord> = if all {
+        stores
+            .pipeline_store
+            .list(10_000, 0)
+            .context("failed to list pipelines")?
+    } else {
+        let name = pipeline_name
+            .ok_or_else(|| anyhow::anyhow!("pipeline name or UUID required (or use --all)"))?;
+        vec![resolve_pipeline(&*stores.pipeline_store, name)?]
+    };
+
+    if records.is_empty() {
+        anyhow::bail!("no pipelines found");
+    }
+
+    let variable_overrides = vars_to_map(vars);
+
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+    let result = rt.block_on(execute_tests(
+        &records,
+        &stores,
+        env,
+        variable_overrides,
+        node_filter,
+        format,
+    ));
+    rt.shutdown_background();
+    result
+}
+
+/// Aggregate test outcome across one or more pipelines.
+struct TestSummary {
+    total: usize,
+    passed: usize,
+    failed_error: usize,
+    failed_warn: usize,
+}
+
+impl TestSummary {
+    fn new() -> Self {
+        Self {
+            total: 0,
+            passed: 0,
+            failed_error: 0,
+            failed_warn: 0,
+        }
+    }
+
+    fn record(&mut self, result: &flux_datafusion::TestNodeResult) {
+        self.total += 1;
+        if result.passed {
+            self.passed += 1;
+        } else if result.severity == flux_engine::node::TestSeverity::Error {
+            self.failed_error += 1;
+        } else {
+            self.failed_warn += 1;
+        }
+    }
+
+    fn exit_code(&self) -> i32 {
+        if self.failed_error > 0 {
+            crate::EXIT_TEST_FAIL
+        } else if self.failed_warn > 0 {
+            crate::EXIT_TEST_WARN
+        } else {
+            crate::EXIT_TEST_PASS
+        }
+    }
+}
+
+async fn execute_tests(
+    records: &[flux_engine::PipelineRecord],
+    stores: &Stores,
+    env: Option<&str>,
+    variable_overrides: HashMap<String, serde_json::Value>,
+    node_filter: Option<&str>,
+    format: OutputFormat,
+) -> Result<()> {
+    let provider_registry = stores.connector_registry.to_provider_registry();
+    let secret_resolver = build_secret_resolver();
+
+    let mut summary = TestSummary::new();
+    let mut all_results: Vec<(String, Vec<flux_datafusion::TestNodeResult>)> = Vec::new();
+
+    for record in records {
+        let pipeline = &record.pipeline;
+
+        // Check that the pipeline has test nodes.
+        let has_tests = pipeline.nodes.iter().any(|n| n.kind.is_test());
+        if !has_tests {
+            if records.len() == 1 {
+                eprintln!(
+                    "{} pipeline `{}` has no test nodes",
+                    crate::color::yellow("Warning:"),
+                    pipeline.name
+                );
+                std::process::exit(crate::EXIT_TEST_CONFIG_ERROR);
+            }
+            // When running --all, silently skip pipelines without tests.
+            continue;
+        }
+
+        // If --node is specified, verify it exists and is a test node.
+        if let Some(filter) = node_filter {
+            let found = pipeline
+                .nodes
+                .iter()
+                .any(|n| n.kind.is_test() && (n.id.0 == filter || n.name == filter));
+            if !found {
+                eprintln!(
+                    "{} test node `{filter}` not found in pipeline `{}`",
+                    crate::color::red("Error:"),
+                    pipeline.name
+                );
+                std::process::exit(crate::EXIT_TEST_CONFIG_ERROR);
+            }
+        }
+
+        // Validate variable overrides.
+        let override_errors =
+            flux_engine::variables::validate_overrides(pipeline, &variable_overrides);
+        if !override_errors.is_empty() {
+            anyhow::bail!("{}", override_errors.join("\n"));
+        }
+
+        // Validate connectors.
+        if let Err(errors) = stores.connector_registry.validate_pipeline(pipeline) {
+            anyhow::bail!("connector validation failed:\n{}", errors.join("\n"));
+        }
+
+        // Validate the DAG.
+        if let Err(errors) = flux_engine::dag::validate(pipeline) {
+            let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            anyhow::bail!("DAG validation failed:\n{}", msgs.join("\n"));
+        }
+
+        let environment = env
+            .map(String::from)
+            .unwrap_or_else(|| pipeline.default_environment.clone());
+
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+        let is_human = matches!(format, OutputFormat::Human);
+        let progress_handle = tokio::spawn(async move {
+            while let Some(event) = progress_rx.recv().await {
+                if is_human {
+                    print_progress_event(&event);
+                }
+            }
+        });
+
+        let options = flux_datafusion::ExecutionOptions {
+            environment,
+            run_store: None, // Don't record test runs in history.
+            cancel: Arc::new(AtomicBool::new(false)),
+            environment_resolver: None,
+            progress: Some(progress_tx),
+            variable_overrides: variable_overrides.clone(),
+            secret_resolver: secret_resolver.clone(),
+            session_factory: Some(Arc::new(flux_datafusion::SessionFactory::default())),
+            incremental_state_store: None,
+            full_refresh: false,
+            bootstrap_incremental: false,
+            dry_run_no_sinks: true,
+        };
+
+        let exec_result =
+            flux_datafusion::PipelineExecutor::execute(pipeline, &provider_registry, &options)
+                .await;
+
+        drop(options);
+        let _ = progress_handle.await;
+
+        match exec_result {
+            Ok((pipeline_result, _run)) => {
+                let mut test_results = pipeline_result.test_results;
+
+                // Filter to a specific node if requested.
+                if let Some(filter) = node_filter {
+                    test_results.retain(|r| {
+                        r.node_id.0 == filter || {
+                            pipeline
+                                .node(&r.node_id)
+                                .map(|n| n.name == filter)
+                                .unwrap_or(false)
+                        }
+                    });
+                }
+
+                for r in &test_results {
+                    summary.record(r);
+                }
+                all_results.push((pipeline.name.clone(), test_results));
+            }
+            Err(e) => {
+                // Execution failed — try to extract test results from a
+                // TestAssertionFailed error.
+                let error_str = format!("{e}");
+                if let flux_datafusion::error::ExecutorError::Node {
+                    kind: flux_datafusion::error::NodeErrorKind::TestAssertionFailed { result, .. },
+                    ..
+                } = &e
+                {
+                    summary.record(result);
+                    all_results.push((pipeline.name.clone(), vec![result.clone()]));
+                    continue;
+                }
+                anyhow::bail!("execution of `{}` failed: {error_str}", pipeline.name);
+            }
+        }
+    }
+
+    if summary.total == 0 {
+        eprintln!(
+            "{} no test nodes found across {} pipeline(s)",
+            crate::color::yellow("Warning:"),
+            records.len()
+        );
+        std::process::exit(crate::EXIT_TEST_CONFIG_ERROR);
+    }
+
+    // Format output.
+    match format {
+        OutputFormat::Human => print_test_results_human(&all_results, &summary),
+        OutputFormat::Json => print_test_results_json(&all_results, &summary)?,
+    }
+
+    let code = summary.exit_code();
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+fn print_test_results_human(
+    results: &[(String, Vec<flux_datafusion::TestNodeResult>)],
+    summary: &TestSummary,
+) {
+    use crate::color;
+
+    eprintln!();
+    for (pipeline_name, test_results) in results {
+        if results.len() > 1 {
+            eprintln!("Pipeline: {}", color::bold(pipeline_name));
+        }
+        for tr in test_results {
+            let status = if tr.passed {
+                color::green("PASS").to_string()
+            } else if tr.severity == flux_engine::node::TestSeverity::Error {
+                color::red("FAIL").to_string()
+            } else {
+                color::yellow("WARN").to_string()
+            };
+            eprintln!("  {} {}", status, tr.node_id);
+
+            for a in &tr.assertions {
+                let icon = if a.passed {
+                    color::green("✓").to_string()
+                } else {
+                    color::red("✗").to_string()
+                };
+                if a.passed {
+                    eprintln!("    {} {}", icon, a.name);
+                } else {
+                    eprintln!(
+                        "    {} {} — {} violation(s)",
+                        icon, a.name, a.violation_count
+                    );
+                    // Show violating rows inline.
+                    if !a.violating_rows.is_empty() {
+                        if let Ok(table) =
+                            arrow::util::pretty::pretty_format_batches(&a.violating_rows)
+                        {
+                            for line in table.to_string().lines() {
+                                eprintln!("      {line}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!();
+    eprintln!(
+        "{} {} passed, {} failed, {} warnings",
+        color::bold("Tests:"),
+        summary.passed,
+        summary.failed_error,
+        summary.failed_warn,
+    );
+}
+
+fn print_test_results_json(
+    results: &[(String, Vec<flux_datafusion::TestNodeResult>)],
+    summary: &TestSummary,
+) -> Result<()> {
+    let pipelines: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(name, test_results)| {
+            let tests: Vec<serde_json::Value> = test_results
+                .iter()
+                .map(|tr| {
+                    let assertions: Vec<serde_json::Value> = tr
+                        .assertions
+                        .iter()
+                        .map(|a| {
+                            serde_json::json!({
+                                "name": a.name,
+                                "passed": a.passed,
+                                "violation_count": a.violation_count,
+                                "message": a.message,
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "node_id": tr.node_id.0,
+                        "passed": tr.passed,
+                        "severity": format!("{:?}", tr.severity).to_lowercase(),
+                        "assertions": assertions,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "pipeline": name,
+                "tests": tests,
+            })
+        })
+        .collect();
+
+    let out = serde_json::json!({
+        "pipelines": pipelines,
+        "summary": {
+            "total": summary.total,
+            "passed": summary.passed,
+            "failed": summary.failed_error,
+            "warnings": summary.failed_warn,
+        },
+        "exit_code": summary.exit_code(),
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

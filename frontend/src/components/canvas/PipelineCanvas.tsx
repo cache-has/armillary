@@ -24,6 +24,9 @@ import '@xyflow/react/dist/style.css';
 
 import type { PipelineNode, PipelineEdge, NodeRole } from '../../types/pipeline';
 import { PipelineNodeComponent } from './PipelineNode';
+import { SnippetGroupNodeComponent } from './SnippetGroupNode';
+import { computeCanvasView } from '../../stores/snippetGroups';
+import { useMemo } from 'react';
 import { PipelineEdgeComponent, EdgeMarkerDefs } from './PipelineEdge';
 import { useForceLayout } from '../../hooks/useForceLayout';
 import { useConnectionValidation } from '../../hooks/useConnectionValidation';
@@ -49,6 +52,7 @@ import './PipelineCanvas.css';
 
 const nodeTypes: NodeTypes = {
   pipeline: PipelineNodeComponent,
+  snippetGroup: SnippetGroupNodeComponent,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -62,8 +66,13 @@ const defaultEdgeOptions = {
 };
 
 function PipelineCanvasInner() {
-  const nodes = usePipelineStore((s) => s.nodes);
-  const edges = usePipelineStore((s) => s.edges);
+  const rawNodes = usePipelineStore((s) => s.nodes);
+  const rawEdges = usePipelineStore((s) => s.edges);
+  const collapsedSnippetGroups = usePipelineStore((s) => s.collapsedSnippetGroups);
+  const { nodes, edges } = useMemo(
+    () => computeCanvasView(rawNodes, rawEdges, collapsedSnippetGroups),
+    [rawNodes, rawEdges, collapsedSnippetGroups],
+  );
   const setNodes = usePipelineStore((s) => s.setNodes);
   const onNodesChange = usePipelineStore((s) => s.onNodesChange);
   const onEdgesChange = usePipelineStore((s) => s.onEdgesChange);
@@ -391,9 +400,11 @@ function PipelineCanvasInner() {
           type: item.role,
           position: { x: position.x, y: position.y },
           pinned_position: false,
-          ...(item.subtypeField === 'connector'
-            ? { connector: item.subtype, config: {} }
-            : { mode: item.subtype as 'sql' | 'python', code: '' }),
+          ...(item.role === 'test'
+            ? { severity: 'error' as const, assertions: [], max_violations_reported: 25 }
+            : item.subtypeField === 'connector'
+              ? { connector: item.subtype, config: {} }
+              : { mode: item.subtype as 'sql' | 'python', code: '' }),
         };
         usePipelineStore.setState((s) => ({
           apiPipeline: s.apiPipeline

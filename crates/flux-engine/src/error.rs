@@ -33,6 +33,12 @@ pub enum DagError {
     #[error("duplicate edge from `{from}` to `{to}`")]
     DuplicateEdge { from: NodeId, to: NodeId },
 
+    #[error("test node `{0}` must have at least one upstream edge")]
+    TestMissingUpstream(NodeId),
+
+    #[error("test node `{0}` must not have downstream edges")]
+    TestHasDownstream(NodeId),
+
     #[error("pipeline has no nodes")]
     EmptyPipeline,
 }
@@ -58,6 +64,9 @@ pub enum ImportError {
 
     #[error("pipeline validation failed:\n{}", format_validation_errors(.0))]
     Validation(Vec<ValidationError>),
+
+    #[error(transparent)]
+    Snippet(#[from] crate::snippet::SnippetError),
 }
 
 /// Result of a successful pipeline import, which may include non-fatal warnings.

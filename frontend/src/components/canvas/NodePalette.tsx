@@ -43,12 +43,15 @@ const PALETTE_ITEMS: PaletteItem[] = [
   { id: 'sink-parquet', label: 'Parquet', icon: paletteIcon.parquet, role: 'sink', subtype: 'parquet', subtypeField: 'connector' },
   { id: 'sink-postgresql', label: 'PostgreSQL', icon: paletteIcon.postgresql, role: 'sink', subtype: 'postgresql', subtypeField: 'connector' },
   { id: 'sink-stdout', label: 'stdout', icon: paletteIcon.stdout, role: 'sink', subtype: 'stdout', subtypeField: 'connector' },
+  // Tests
+  { id: 'test-assertion', label: 'Assertion', icon: paletteIcon.test, role: 'test', subtype: 'test', subtypeField: 'connector' },
 ];
 
 const SECTIONS: { role: NodeRole; label: string; icon: ReactNode }[] = [
   { role: 'source', label: 'Sources', icon: roleIcon.source },
   { role: 'transform', label: 'Transforms', icon: roleIcon.transform },
   { role: 'sink', label: 'Sinks', icon: roleIcon.sink },
+  { role: 'test', label: 'Tests', icon: roleIcon.test },
 ];
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react';
 
 import type { PipelineNode, PipelineEdge } from '../types/pipeline';
+import { listSnippetGroupIds } from './snippetGroups';
 import type {
   ApiPipeline,
   ApiPipelineResponse,
@@ -42,6 +43,8 @@ function apiNodeToReactFlow(apiNode: ApiNode): PipelineNode {
       pinnedPosition: apiNode.pinned_position,
       envOverridden: false,
       materializationPolicy: apiNode.materialization,
+      snippetParent: apiNode.snippet_parent,
+      snippetName: apiNode.snippet_name,
     },
   };
 }
@@ -141,6 +144,11 @@ export interface PipelineStoreState {
   _redoStack: PipelineSnapshot[];
   /** Bumped when a run completes, so dependent effects re-fetch run data. */
   lastRunCompletedAt: number;
+  /** Call-site IDs of snippet groups currently rendered as a single
+   *  collapsed placeholder. The store always holds the FULL set of expanded
+   *  nodes; collapsing is purely a render-time concern handled by
+   *  `computeCanvasView`. Default: every snippet group is collapsed on load. */
+  collapsedSnippetGroups: Set<string>;
 }
 
 export interface PipelineStoreActions {
@@ -201,6 +209,8 @@ export interface PipelineStoreActions {
   resetNodeStatuses: () => void;
   /** Signal that a run completed (triggers re-fetch of run stats). */
   notifyRunCompleted: () => void;
+  /** Toggle a snippet group's collapsed state. */
+  toggleSnippetGroup: (callSiteId: string) => void;
 }
 
 export type PipelineStore = PipelineStoreState & PipelineStoreActions;
@@ -235,6 +245,7 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
   _undoStack: [],
   _redoStack: [],
   lastRunCompletedAt: 0,
+  collapsedSnippetGroups: new Set<string>(),
 
   // Actions
   loadPipeline: async (id: string) => {
@@ -305,6 +316,16 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
       _undoStack: [],
       _redoStack: [],
       lastRunCompletedAt: 0,
+      collapsedSnippetGroups: new Set(listSnippetGroupIds(nodes)),
+    });
+  },
+
+  toggleSnippetGroup: (callSiteId: string) => {
+    set((state) => {
+      const next = new Set(state.collapsedSnippetGroups);
+      if (next.has(callSiteId)) next.delete(callSiteId);
+      else next.add(callSiteId);
+      return { collapsedSnippetGroups: next };
     });
   },
 

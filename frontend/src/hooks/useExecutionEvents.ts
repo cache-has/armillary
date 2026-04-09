@@ -35,6 +35,21 @@ interface NodeFailedEvent {
   error: string;
 }
 
+interface TestNodePassedEvent {
+  type: 'test_node_passed';
+  run_id: string;
+  node_id: string;
+  assertions_count: number;
+}
+
+interface TestNodeFailedEvent {
+  type: 'test_node_failed';
+  run_id: string;
+  node_id: string;
+  severity: 'error' | 'warn';
+  failures: string[];
+}
+
 interface RunCompletedEvent {
   type: 'run_completed';
   run_id: string;
@@ -60,6 +75,8 @@ type ExecutionEvent =
   | NodeStartedEvent
   | NodeCompletedEvent
   | NodeFailedEvent
+  | TestNodePassedEvent
+  | TestNodeFailedEvent
   | RunCompletedEvent
   | PluginRegistryReloadedEvent;
 
@@ -98,6 +115,16 @@ export function useExecutionEvents() {
               break;
             case 'node_failed':
               store.setNodeStatus(event.node_id, 'error', event.error);
+              break;
+            case 'test_node_passed':
+              store.setNodeStatus(event.node_id, 'success');
+              break;
+            case 'test_node_failed':
+              store.setNodeStatus(
+                event.node_id,
+                event.severity === 'warn' ? 'success' : 'error',
+                event.failures.join('; '),
+              );
               break;
             case 'run_completed':
               // Leave node statuses as-is (success/error) so user can see results.

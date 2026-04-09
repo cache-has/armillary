@@ -68,7 +68,13 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
 
   return (
     <div
-      className={`pipeline-node pipeline-node--${data.role}${hovered ? ' pipeline-node--hovered' : ''}`}
+      className={[
+        'pipeline-node',
+        `pipeline-node--${data.role}`,
+        hovered ? 'pipeline-node--hovered' : '',
+        data.role === 'test' && data.status === 'success' ? 'pipeline-node--test-success' : '',
+        data.role === 'test' && data.status === 'error' ? 'pipeline-node--test-error' : '',
+      ].filter(Boolean).join(' ')}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -155,7 +161,7 @@ export const PipelineNodeComponent = memo(function PipelineNodeComponent({
         </div>
       )}
       <EnvironmentBadge envOverridden={data.envOverridden} />
-      {data.role !== 'sink' && (
+      {data.role !== 'sink' && data.role !== 'test' && (
         <Handle type="source" position={Position.Right} />
       )}
     </div>

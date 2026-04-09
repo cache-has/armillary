@@ -5,7 +5,7 @@
 
 use crate::error::{IncrementalStateError, RunStoreError};
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
-use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus};
+use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use crate::storage::{IncrementalStateStorage, RunStorage};
 use flux_engine::NodeId;
 use rusqlite::{Connection, params};
@@ -122,6 +122,20 @@ impl SqliteRunStore {
             // Other errors are real — bubble up.
             return Err(e.into());
         }
+
+        // Idempotent migration: add test_results JSON column (doc 30).
+        let alter2 = conn.execute(
+            "ALTER TABLE pipeline_runs ADD COLUMN test_results TEXT",
+            [],
+        );
+        if let Err(rusqlite::Error::SqliteFailure(_, Some(msg))) = &alter2 {
+            if !msg.contains("duplicate column") {
+                alter2.map(|_| ())?;
+            }
+        } else if let Err(e) = alter2 {
+            return Err(e.into());
+        }
+
         Ok(())
     }
 
@@ -164,10 +178,15 @@ impl SqliteRunStore {
         let conn = self.conn.lock().unwrap();
         let start_ms = run.start_time.map(system_time_to_ms);
         let end_ms = run.end_time.map(system_time_to_ms);
+        let test_results_json: Option<String> = if run.test_results.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&run.test_results).ok()
+        };
 
         conn.execute(
-            "INSERT OR IGNORE INTO pipeline_runs (id, pipeline_name, environment, status, start_time_ms, end_time_ms, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR IGNORE INTO pipeline_runs (id, pipeline_name, environment, status, start_time_ms, end_time_ms, error, test_results)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 run.id.0.to_string(),
                 run.pipeline_name,
@@ -176,6 +195,7 @@ impl SqliteRunStore {
                 start_ms,
                 end_ms,
                 run.error,
+                test_results_json,
             ],
         )?;
 
@@ -264,6 +284,21 @@ impl RunStorage for SqliteRunStore {
         Ok(())
     }
 
+    fn save_test_results(
+        &self,
+        run_id: &RunId,
+        results: &[TestResultSummary],
+    ) -> Result<(), RunStoreError> {
+        let conn = self.conn.lock().unwrap();
+        let json = serde_json::to_string(results)
+            .map_err(|e| RunStoreError::Database(format!("failed to serialize test results: {e}")))?;
+        conn.execute(
+            "UPDATE pipeline_runs SET test_results = ?1 WHERE id = ?2",
+            params![json, run_id.0.to_string()],
+        )?;
+        Ok(())
+    }
+
     fn save_node_stats(&self, run_id: &RunId, stats: &NodeRunStats) -> Result<(), RunStoreError> {
         let conn = self.conn.lock().unwrap();
         let receipt_json = stats
@@ -292,7 +327,8 @@ impl RunStorage for SqliteRunStore {
         let conn = self.conn.lock().unwrap();
 
         let mut stmt = conn.prepare(
-            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error
+            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                    test_results
              FROM pipeline_runs WHERE id = ?1",
         )?;
 
@@ -318,7 +354,8 @@ impl RunStorage for SqliteRunStore {
         match pipeline_name {
             Some(name) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error
+                    "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                            test_results
                      FROM pipeline_runs
                      WHERE pipeline_name = ?1
                      ORDER BY start_time_ms DESC
@@ -334,7 +371,8 @@ impl RunStorage for SqliteRunStore {
             }
             None => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error
+                    "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                            test_results
                      FROM pipeline_runs
                      ORDER BY start_time_ms DESC
                      LIMIT ?1",
@@ -585,6 +623,11 @@ fn row_to_pipeline_run(row: &rusqlite::Row<'_>) -> Result<PipelineRun, RunStoreE
     let status_str: String = row.get(3)?;
     let start_ms: Option<i64> = row.get(4)?;
     let end_ms: Option<i64> = row.get(5)?;
+    let test_results_json: Option<String> = row.get(7)?;
+    let test_results = test_results_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
 
     Ok(PipelineRun {
         id: RunId(
@@ -599,6 +642,7 @@ fn row_to_pipeline_run(row: &rusqlite::Row<'_>) -> Result<PipelineRun, RunStoreE
         end_time: end_ms.map(ms_to_system_time),
         node_stats: Vec::new(), // populated by caller
         error: row.get(6)?,
+        test_results,
     })
 }
 
@@ -729,5 +773,54 @@ mod tests {
 
         let runs = store.list_runs(None, 100).unwrap();
         assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn test_results_round_trip() {
+        use crate::run::{AssertionResultSummary, TestResultSummary};
+        use flux_engine::NodeId;
+        use flux_engine::node::TestSeverity;
+
+        let store = SqliteRunStore::open_in_memory().unwrap();
+        let run = store.create_run("test-pipe", "dev").unwrap();
+        store.set_running(&run.id, SystemTime::now()).unwrap();
+
+        let results = vec![TestResultSummary {
+            node_id: NodeId::new("validate_orders"),
+            passed: false,
+            severity: TestSeverity::Error,
+            assertions: vec![
+                AssertionResultSummary {
+                    name: "not_null(order_id)".into(),
+                    passed: true,
+                    violation_count: 0,
+                    violating_rows: Vec::new(),
+                    message: None,
+                },
+                AssertionResultSummary {
+                    name: "unique(order_id)".into(),
+                    passed: false,
+                    violation_count: 3,
+                    violating_rows: vec![serde_json::json!({"order_id": 42})],
+                    message: Some("3 duplicate(s) found".into()),
+                },
+            ],
+        }];
+
+        store.save_test_results(&run.id, &results).unwrap();
+        store
+            .finish_run(&run.id, RunStatus::Failed, SystemTime::now(), None)
+            .unwrap();
+
+        let loaded = store.get_run(&run.id).unwrap().unwrap();
+        assert_eq!(loaded.test_results.len(), 1);
+        let tr = &loaded.test_results[0];
+        assert_eq!(tr.node_id, NodeId::new("validate_orders"));
+        assert!(!tr.passed);
+        assert_eq!(tr.assertions.len(), 2);
+        assert!(tr.assertions[0].passed);
+        assert!(!tr.assertions[1].passed);
+        assert_eq!(tr.assertions[1].violation_count, 3);
+        assert_eq!(tr.assertions[1].violating_rows.len(), 1);
     }
 }

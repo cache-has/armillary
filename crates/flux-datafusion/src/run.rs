@@ -8,6 +8,7 @@
 
 use crate::provider::MaterializationReceipt;
 use flux_engine::NodeId;
+use flux_engine::node::TestSeverity;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use uuid::Uuid;
@@ -42,6 +43,19 @@ pub enum ExecutionEvent {
         run_id: RunId,
         node_id: NodeId,
         error: String,
+    },
+    /// A test node's assertions all passed.
+    TestNodePassed {
+        run_id: RunId,
+        node_id: NodeId,
+        assertions_count: usize,
+    },
+    /// One or more of a test node's assertions failed.
+    TestNodeFailed {
+        run_id: RunId,
+        node_id: NodeId,
+        severity: TestSeverity,
+        failures: Vec<String>,
     },
     RunCompleted {
         run_id: RunId,
@@ -132,6 +146,42 @@ impl NodeRunStats {
     }
 }
 
+/// Serializable summary of a single assertion result.
+///
+/// Unlike [`crate::test_assertion::AssertionResult`], violating rows are
+/// stored as JSON values rather than Arrow `RecordBatch`es so the struct
+/// can be persisted and returned via the API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssertionResultSummary {
+    /// Human-readable name of the assertion.
+    pub name: String,
+    /// Whether the assertion passed.
+    pub passed: bool,
+    /// Number of violating rows found (0 if passed).
+    pub violation_count: u64,
+    /// Sample violating rows as JSON objects (up to `max_violations_reported`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub violating_rows: Vec<serde_json::Value>,
+    /// Error message when the assertion fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Serializable summary of all test assertions for one test node within a run.
+///
+/// Mirrors [`crate::test_assertion::TestNodeResult`] without Arrow types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestResultSummary {
+    /// Node ID of the test node.
+    pub node_id: NodeId,
+    /// Whether the overall test passed.
+    pub passed: bool,
+    /// Severity level of the test node.
+    pub severity: TestSeverity,
+    /// Individual assertion results.
+    pub assertions: Vec<AssertionResultSummary>,
+}
+
 /// A complete record of a single pipeline execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineRun {
@@ -143,6 +193,9 @@ pub struct PipelineRun {
     pub end_time: Option<SystemTime>,
     pub node_stats: Vec<NodeRunStats>,
     pub error: Option<String>,
+    /// Test node results from the pipeline run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test_results: Vec<TestResultSummary>,
 }
 
 impl PipelineRun {
@@ -157,6 +210,7 @@ impl PipelineRun {
             end_time: None,
             node_stats: Vec::new(),
             error: None,
+            test_results: Vec::new(),
         }
     }
 
@@ -166,6 +220,48 @@ impl PipelineRun {
                 Some(end.duration_since(start).unwrap_or_default().as_millis() as u64)
             }
             _ => None,
+        }
+    }
+}
+
+/// Convert Arrow `RecordBatch`es to JSON row objects for persistence.
+fn batches_to_json(batches: &[arrow::record_batch::RecordBatch]) -> Vec<serde_json::Value> {
+    let mut buf = Vec::new();
+    {
+        let mut writer = arrow::json::LineDelimitedWriter::new(&mut buf);
+        for batch in batches {
+            if writer.write(batch).is_err() {
+                return Vec::new();
+            }
+        }
+        let _ = writer.finish();
+    }
+    let text = String::from_utf8(buf).unwrap_or_default();
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+impl TestResultSummary {
+    /// Convert from the in-memory `TestNodeResult` (which contains Arrow
+    /// `RecordBatch`es) to the serializable summary form.
+    pub fn from_test_node_result(r: &crate::test_assertion::TestNodeResult) -> Self {
+        Self {
+            node_id: r.node_id.clone(),
+            passed: r.passed,
+            severity: r.severity,
+            assertions: r
+                .assertions
+                .iter()
+                .map(|a| AssertionResultSummary {
+                    name: a.name.clone(),
+                    passed: a.passed,
+                    violation_count: a.violation_count,
+                    violating_rows: batches_to_json(&a.violating_rows),
+                    message: a.message.clone(),
+                })
+                .collect(),
         }
     }
 }

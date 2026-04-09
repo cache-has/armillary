@@ -111,11 +111,73 @@ export interface MaterializationReceipt {
   schema_diff?: SchemaDiff;
 }
 
+// ---------------------------------------------------------------------------
+// Test node assertions (mirrors `flux-engine::node::Assertion`)
+// ---------------------------------------------------------------------------
+
+/** Severity level for a test node. */
+export type TestSeverity = 'error' | 'warn';
+
+/** A single data assertion. Discriminated by `kind`. */
+export type ApiAssertion =
+  | { kind: 'not_null'; columns: string[] }
+  | { kind: 'unique'; columns: string[] }
+  | { kind: 'accepted_values'; column: string; values: (string | number | boolean)[] }
+  | { kind: 'row_count_between'; min: number; max: number }
+  | { kind: 'row_count_equal_to'; count: number }
+  | { kind: 'no_duplicates' }
+  | { kind: 'column_values_match_regex'; column: string; pattern: string }
+  | { kind: 'expression_true'; expression: string }
+  | { kind: 'sql'; name: string; query: string };
+
+/** All supported assertion kinds. */
+export const ASSERTION_KINDS = [
+  'not_null',
+  'unique',
+  'accepted_values',
+  'row_count_between',
+  'row_count_equal_to',
+  'no_duplicates',
+  'column_values_match_regex',
+  'expression_true',
+  'sql',
+] as const;
+
+export type AssertionKind = (typeof ASSERTION_KINDS)[number];
+
+/** Human-readable labels for assertion kinds. */
+export const ASSERTION_LABELS: Record<AssertionKind, string> = {
+  not_null: 'Not Null',
+  unique: 'Unique',
+  accepted_values: 'Accepted Values',
+  row_count_between: 'Row Count Between',
+  row_count_equal_to: 'Row Count Equal To',
+  no_duplicates: 'No Duplicates',
+  column_values_match_regex: 'Column Values Match Regex',
+  expression_true: 'Expression True',
+  sql: 'Custom SQL',
+};
+
+/** Create a default (empty) assertion for a given kind. */
+export function defaultAssertion(kind: AssertionKind): ApiAssertion {
+  switch (kind) {
+    case 'not_null': return { kind, columns: [] };
+    case 'unique': return { kind, columns: [] };
+    case 'accepted_values': return { kind, column: '', values: [] };
+    case 'row_count_between': return { kind, min: 1, max: 1000000 };
+    case 'row_count_equal_to': return { kind, count: 0 };
+    case 'no_duplicates': return { kind };
+    case 'column_values_match_regex': return { kind, column: '', pattern: '' };
+    case 'expression_true': return { kind, expression: '' };
+    case 'sql': return { kind, name: '', query: '' };
+  }
+}
+
 /** A backend pipeline node (tagged union via `type` field). */
 export interface ApiNode {
   id: string;
   name: string;
-  type: 'source' | 'transform' | 'sink';
+  type: 'source' | 'transform' | 'sink' | 'test';
   position: ApiPosition;
   pinned_position: boolean;
   /** Source/sink fields */
@@ -132,6 +194,17 @@ export interface ApiNode {
   materialized?: boolean;
   /** Max rows to cache for preview. Overrides pipeline-level default when set. */
   cache_row_limit?: number;
+  /** Test node fields */
+  severity?: TestSeverity;
+  assertions?: ApiAssertion[];
+  max_violations_reported?: number;
+  /** Set on nodes produced by snippet expansion: ID of the outermost snippet
+   *  call this node belongs to. The frontend uses this to render snippet
+   *  expansions as collapsible group nodes. */
+  snippet_parent?: string;
+  /** Snippet name (matches the snippet definition's `snippet` field) for the
+   *  outermost call this node belongs to. Sibling of `snippet_parent`. */
+  snippet_name?: string;
 }
 
 /** A backend pipeline edge. */
@@ -224,6 +297,37 @@ export async function createPipeline(name: string): Promise<ApiPipelineResponse>
     throw new Error(body?.error ?? `Failed to create pipeline: ${res.status} ${res.statusText}`);
   }
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// UDFs (planning doc 29, Layer 1)
+// ---------------------------------------------------------------------------
+
+export interface ApiUdfParam {
+  name: string;
+  data_type: string;
+}
+
+export interface ApiUdfInfo {
+  name: string;
+  signature: string;
+  params: ApiUdfParam[];
+  return_type: string | null;
+  source: string;
+}
+
+export interface ApiUdfsResponse {
+  udfs: ApiUdfInfo[];
+}
+
+/** Fetch reusable SQL UDFs available to a pipeline (for editor autocomplete). */
+export async function fetchPipelineUdfs(pipelineId: string): Promise<ApiUdfInfo[]> {
+  const res = await fetch(`${BASE}/${pipelineId}/udfs`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch UDFs: ${res.status} ${res.statusText}`);
+  }
+  const body: ApiUdfsResponse = await res.json();
+  return body.udfs;
 }
 
 /** List pipelines with optional pagination. */
@@ -564,6 +668,23 @@ export interface ApiNodeRunStats {
   error?: string;
 }
 
+/** Result of a single assertion within a test node run. */
+export interface ApiAssertionResult {
+  name: string;
+  passed: boolean;
+  violation_count: number;
+  violating_rows?: Record<string, unknown>[];
+  message?: string;
+}
+
+/** Summary of a test node's results from a pipeline run. */
+export interface ApiTestResult {
+  node_id: string;
+  passed: boolean;
+  severity: TestSeverity;
+  assertions: ApiAssertionResult[];
+}
+
 /** A pipeline run record. */
 export interface ApiPipelineRun {
   id: string;
@@ -574,6 +695,7 @@ export interface ApiPipelineRun {
   end_time?: number;
   node_stats: ApiNodeRunStats[];
   error?: string;
+  test_results?: ApiTestResult[];
 }
 
 /** Request body for single-node preview. */

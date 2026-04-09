@@ -125,6 +125,8 @@ fn event_matches_filter(event: &ExecutionEvent, ids: &HashSet<RunId>) -> bool {
         | ExecutionEvent::NodeStarted { run_id, .. }
         | ExecutionEvent::NodeCompleted { run_id, .. }
         | ExecutionEvent::NodeFailed { run_id, .. }
+        | ExecutionEvent::TestNodePassed { run_id, .. }
+        | ExecutionEvent::TestNodeFailed { run_id, .. }
         | ExecutionEvent::RunCompleted { run_id, .. } => run_id,
     };
     ids.contains(run_id)

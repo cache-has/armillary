@@ -222,6 +222,13 @@ pub fn validate_variable_references(pipeline: &Pipeline) -> Vec<VariableWarning>
                     &mut warnings,
                 );
             }
+            crate::node::NodeKind::Test(_) => {
+                // Test assertions use SQL internally but don't reference
+                // pipeline variables directly.
+            }
+            crate::node::NodeKind::Snippet(_) => {
+                // Expanded before execution; nothing to validate here.
+            }
         }
     }
 
@@ -345,6 +352,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 Node {
                     id: NodeId::new("src"),
@@ -356,6 +368,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
                 Node {
                     id: NodeId::new("sink"),
@@ -367,6 +381,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
             ],
             edges: vec![Edge::new("src", "sink")],
@@ -528,6 +544,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         };
         // Fix edges for valid DAG.
         pipeline.edges = vec![Edge::new("sink", "xform")];
@@ -541,6 +559,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         });
         pipeline.edges.push(Edge::new("xform", "sink2"));
 
@@ -570,6 +590,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         };
         let warnings = validate_variable_references(&pipeline);
         assert!(warnings.is_empty(), "got warnings: {:?}", warnings);

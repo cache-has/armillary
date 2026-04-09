@@ -33,6 +33,23 @@
 .pipeline-node--sink {
   border-color: #22c55e;
 }
+.pipeline-node--test {
+  border-color: #f59e0b;
+}
+
+/* Test node status ring: a colored outline that reflects assertion pass/fail */
+.pipeline-node--test.pipeline-node--test-success {
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.4);
+  border-color: #22c55e;
+}
+.pipeline-node--test.pipeline-node--test-error {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.4);
+  border-color: #ef4444;
+}
+.pipeline-node--test.pipeline-node--test-warn {
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.4);
+  border-color: #f59e0b;
+}
 
 .pipeline-node__header {
   display: flex;

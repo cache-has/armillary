@@ -21,6 +21,8 @@ pub mod schema_diff;
 pub mod session;
 pub mod stats;
 pub mod storage;
+pub mod test_assertion;
+pub mod udfs;
 pub mod watermark;
 
 pub use column_stats::{ColumnStats, compute_column_stats};
@@ -38,11 +40,16 @@ pub use provider::{
 pub use python_runtime::PythonConfig;
 pub use resolver::{EnvironmentCatalog, EnvironmentResolver, EnvironmentSchema};
 pub use result::PipelineResult;
-pub use run::{ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus};
+pub use run::{
+    AssertionResultSummary, ExecutionEvent, NodeRunStats, PipelineRun, RunId, RunStatus,
+    TestResultSummary,
+};
 pub use run_store::SqliteRunStore;
 pub use session::{SessionFactory, SessionFactoryConfig};
 pub use stats::NodeStats;
 pub use storage::{EnvironmentStorage, IncrementalStateStorage, RunStorage};
+pub use test_assertion::{AssertionResult, TestNodeResult};
+pub use udfs::{UdfDefinition, UdfError, UdfRegistry};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

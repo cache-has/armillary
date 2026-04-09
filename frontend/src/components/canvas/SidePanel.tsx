@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
 import type { PipelineNode } from '../../types/pipeline';
 import { roleIcon } from '../iconMaps';
-import type { ApiNode, ApiColumnInfo, ApiSampleConfig } from '../../api/pipelines';
+import type { ApiNode, ApiColumnInfo, ApiSampleConfig, ApiTestResult, ApiAssertionResult } from '../../api/pipelines';
 import {
   previewPipeline,
   updatePipeline,
@@ -13,6 +13,7 @@ import {
   fetchRunIncrementalStats,
   type ApiPreviewNodeResponse,
   type ApiNodeRunStats,
+  type ApiPipelineRun,
   type MaterializationReceipt,
 } from '../../api/pipelines';
 import { buildApiPipeline } from '../../stores/pipelineStore';
@@ -354,6 +355,8 @@ interface NodeContentProps {
   sampleMethod?: string;
   runStats: ApiNodeRunStats | null;
   receipt?: MaterializationReceipt | null;
+  testResult?: ApiTestResult | null;
+  recentRuns?: ApiPipelineRun[];
   upstreamNames: string[];
   schemaDiff?: SchemaDiff | null;
   sampleConfig?: ApiSampleConfig;
@@ -602,6 +605,157 @@ function SinkContent({ node, apiNode, runStats, receipt }: NodeContentProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Assertion result row sub-component
+// ---------------------------------------------------------------------------
+
+function AssertionResultRow({ result }: { result: ApiAssertionResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasViolations = (result.violating_rows?.length ?? 0) > 0;
+
+  return (
+    <div className="side-panel__assertion-row">
+      <div
+        className="side-panel__assertion-header"
+        onClick={hasViolations ? () => setExpanded(!expanded) : undefined}
+        style={{ cursor: hasViolations ? 'pointer' : 'default' }}
+      >
+        <span className={`side-panel__assertion-icon ${result.passed ? 'side-panel__assertion-icon--pass' : 'side-panel__assertion-icon--fail'}`}>
+          {result.passed ? '\u2713' : '\u2717'}
+        </span>
+        <span className="side-panel__assertion-name">{result.name}</span>
+        {!result.passed && (
+          <span className="side-panel__assertion-count">
+            {result.violation_count.toLocaleString()}
+          </span>
+        )}
+        {hasViolations && (
+          <span className={`side-panel__schema-arrow${expanded ? ' side-panel__schema-arrow--open' : ''}`}>
+            &#9654;
+          </span>
+        )}
+      </div>
+      {result.message && !result.passed && (
+        <div className="side-panel__assertion-message">{result.message}</div>
+      )}
+      {expanded && hasViolations && (
+        <div className="side-panel__table-wrap">
+          <table className="side-panel__table">
+            <thead>
+              <tr>
+                {Object.keys(result.violating_rows![0]).map((col) => (
+                  <th key={col}>{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {result.violating_rows!.map((row, i) => (
+                <tr key={i}>
+                  {Object.values(row).map((val, j) => (
+                    <td key={j}>{val == null ? 'NULL' : String(val)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Test trend mini-bar
+// ---------------------------------------------------------------------------
+
+function TestTrendBar({ nodeId, runs }: { nodeId: string; runs: ApiPipelineRun[] }) {
+  // Only include runs that have test results for this node
+  const relevant = runs
+    .filter((r) => r.test_results?.some((tr) => tr.node_id === nodeId))
+    .slice(0, 10)
+    .reverse(); // oldest first for left-to-right display
+
+  if (relevant.length === 0) {
+    return <span className="side-panel__empty">No test history</span>;
+  }
+
+  return (
+    <div className="side-panel__test-trend" title="Recent test results (oldest to newest)">
+      {relevant.map((run) => {
+        const tr = run.test_results!.find((t) => t.node_id === nodeId)!;
+        const cls = tr.passed
+          ? 'side-panel__trend-dot--pass'
+          : tr.severity === 'warn'
+            ? 'side-panel__trend-dot--warn'
+            : 'side-panel__trend-dot--fail';
+        return (
+          <span
+            key={run.id}
+            className={`side-panel__trend-dot ${cls}`}
+            title={`${run.id.slice(0, 8)} — ${tr.passed ? 'passed' : 'failed'}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Test node content
+// ---------------------------------------------------------------------------
+
+function TestContent({ apiNode, testResult, recentRuns, node }: NodeContentProps) {
+  const severity = (apiNode as Record<string, unknown> | undefined)?.severity as string | undefined;
+  const assertions = (apiNode as Record<string, unknown> | undefined)?.assertions as Array<Record<string, unknown>> | undefined;
+
+  return (
+    <>
+      <div className="side-panel__section">
+        <div className="side-panel__section-title">Configuration</div>
+        <div className="side-panel__kv">
+          <span className="side-panel__kv-key">Severity</span>
+          <span className={`side-panel__kv-value ${severity === 'warn' ? 'side-panel__severity--warn' : ''}`}>
+            {severity ?? 'error'}
+          </span>
+        </div>
+        <div className="side-panel__kv">
+          <span className="side-panel__kv-key">Assertions</span>
+          <span className="side-panel__kv-value">{assertions?.length ?? 0}</span>
+        </div>
+      </div>
+
+      <div className="side-panel__section">
+        <div className="side-panel__section-title">Last Run Results</div>
+        {!testResult ? (
+          <span className="side-panel__empty">No test results yet</span>
+        ) : (
+          <>
+            <div className="side-panel__kv" style={{ marginBottom: 8 }}>
+              <span className="side-panel__kv-key">Status</span>
+              <span
+                className="side-panel__kv-value"
+                style={{ color: testResult.passed ? '#16a34a' : testResult.severity === 'warn' ? '#d97706' : '#ef4444' }}
+              >
+                {testResult.passed ? 'Passed' : testResult.severity === 'warn' ? 'Warning' : 'Failed'}
+              </span>
+            </div>
+            {testResult.assertions.map((a, i) => (
+              <AssertionResultRow key={i} result={a} />
+            ))}
+          </>
+        )}
+      </div>
+
+      {recentRuns && recentRuns.length > 0 && (
+        <div className="side-panel__section">
+          <div className="side-panel__section-title">Test History</div>
+          <TestTrendBar nodeId={node.id} runs={recentRuns} />
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Inline editable name
 // ---------------------------------------------------------------------------
 
@@ -687,6 +841,8 @@ export function SidePanel() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [sampleMethod, setSampleMethod] = useState<string | undefined>(undefined);
   const [runStats, setRunStats] = useState<Map<string, ApiNodeRunStats>>(new Map());
+  const [testResults, setTestResults] = useState<Map<string, ApiTestResult>>(new Map());
+  const [recentRuns, setRecentRuns] = useState<ApiPipelineRun[]>([]);
   const [receipts, setReceipts] = useState<Map<string, MaterializationReceipt>>(new Map());
   const [reExecute, setReExecute] = useState(false);
   const lastRunCompletedAt = usePipelineStore((s) => s.lastRunCompletedAt);
@@ -779,8 +935,10 @@ export function SidePanel() {
 
     async function loadRuns() {
       try {
-        const runs = await fetchPipelineRuns(pipelineId!, 1, 0);
+        // Fetch up to 10 recent runs for test trend display
+        const runs = await fetchPipelineRuns(pipelineId!, 10, 0);
         if (controller.signal.aborted) return;
+        setRecentRuns(runs);
         if (runs.length > 0) {
           const run = runs[0];
           const map = new Map<string, ApiNodeRunStats>();
@@ -788,6 +946,16 @@ export function SidePanel() {
             map.set(stat.node_id, stat);
           }
           setRunStats(map);
+
+          // Extract test results from the latest run
+          const tmap = new Map<string, ApiTestResult>();
+          if (run.test_results) {
+            for (const tr of run.test_results) {
+              tmap.set(tr.node_id, tr);
+            }
+          }
+          setTestResults(tmap);
+
           // Best-effort: load receipts for this run so the side panel can show
           // per-sink incremental stats. Failures are non-fatal — old runs may
           // pre-date the receipt column.
@@ -920,6 +1088,8 @@ export function SidePanel() {
         sampleMethod,
         runStats: runStats.get(selectedNodeId!) ?? null,
         receipt: receipts.get(selectedNodeId!) ?? null,
+        testResult: testResults.get(selectedNodeId!) ?? null,
+        recentRuns,
         upstreamNames,
         schemaDiff,
         previewError,
@@ -973,6 +1143,9 @@ export function SidePanel() {
             )}
             {selectedNode.data.role === 'sink' && (
               <SinkContent {...contentProps} />
+            )}
+            {selectedNode.data.role === 'test' && (
+              <TestContent {...contentProps} />
             )}
           </div>
 

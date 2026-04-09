@@ -6,7 +6,7 @@ use crate::node::{Node, NodeId, TransformConfig};
 use crate::sample::SampleConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A complete pipeline definition: a DAG of source, transform, and sink nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +35,54 @@ pub struct Pipeline {
     /// are resolved relative to the current working directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_dir: Option<String>,
+    /// Directory containing reusable SQL UDF definitions (`*.sql` files with
+    /// `CREATE FUNCTION` statements). Each UDF is parsed at pipeline load time
+    /// and inlined into SQL transforms by name. Resolved relative to the
+    /// pipeline file's directory when relative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udfs_dir: Option<String>,
+    /// Directory containing reusable snippet `.json` files. Mirrors `udfs_dir`.
+    /// Resolved relative to the pipeline file's directory when relative (via
+    /// [`Pipeline::from_json_at_path`]) or relative to the current working
+    /// directory (via [`Pipeline::from_json`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippets_dir: Option<String>,
+    /// When `Some`, this file is a snippet rather than a runnable pipeline.
+    /// The value is the snippet's external name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    /// Parameters this snippet accepts. Empty for non-snippet pipelines.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, SnippetParamType>,
+    /// Internal node IDs exposed to the calling pipeline. Empty for non-snippet
+    /// pipelines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<String>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+}
+
+/// A snippet parameter type. Deserializes from/serializes to a bare string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnippetParamType {
+    String,
+    Number,
+    Bool,
+    Column,
+    ColumnList,
+}
+
+impl SnippetParamType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Bool => "bool",
+            Self::Column => "column",
+            Self::ColumnList => "column_list",
+        }
+    }
 }
 
 fn default_version() -> u32 {
@@ -62,8 +108,62 @@ impl Pipeline {
         let mut pipeline: Pipeline =
             serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
         crate::validate::migrate_legacy_sinks(&mut pipeline);
+        // Snippet files themselves load-through without expansion or
+        // validate_import (they are not runnable DAGs on their own).
+        if pipeline.snippet.is_some() {
+            return Ok(pipeline);
+        }
+        Self::expand_snippets_if_needed(&mut pipeline, None)?;
         crate::validate::validate_import(&pipeline)?;
         Ok(pipeline)
+    }
+
+    /// Like [`from_json`](Self::from_json), but resolves a relative
+    /// `snippets_dir` against `base_dir` (the pipeline file's directory).
+    pub fn from_json_at_path(
+        json: &str,
+        base_dir: &Path,
+    ) -> Result<Self, crate::error::ImportError> {
+        let mut pipeline: Pipeline =
+            serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
+        crate::validate::migrate_legacy_sinks(&mut pipeline);
+        if pipeline.snippet.is_some() {
+            return Ok(pipeline);
+        }
+        Self::expand_snippets_if_needed(&mut pipeline, Some(base_dir))?;
+        crate::validate::validate_import(&pipeline)?;
+        Ok(pipeline)
+    }
+
+    fn expand_snippets_if_needed(
+        pipeline: &mut Pipeline,
+        base_dir: Option<&Path>,
+    ) -> Result<(), crate::error::ImportError> {
+        let has_snippets = pipeline.nodes.iter().any(|n| n.kind.is_snippet());
+        if !has_snippets {
+            return Ok(());
+        }
+        let dir = match pipeline.snippets_dir.as_deref() {
+            Some(d) => d,
+            None => {
+                return Err(crate::error::ImportError::Snippet(
+                    crate::snippet::SnippetError::NotConfigured,
+                ));
+            }
+        };
+        let raw_path = Path::new(dir);
+        let resolved: PathBuf = if raw_path.is_absolute() {
+            raw_path.to_path_buf()
+        } else if let Some(base) = base_dir {
+            base.join(raw_path)
+        } else {
+            raw_path.to_path_buf()
+        };
+        let registry = crate::snippet::SnippetRegistry::load_from_dir(&resolved)
+            .map_err(crate::error::ImportError::Snippet)?;
+        crate::snippet::expand_snippets(pipeline, &registry)
+            .map_err(crate::error::ImportError::Snippet)?;
+        Ok(())
     }
 
     /// Deserialize from JSON with schema validation and variable reference warnings.
@@ -76,6 +176,9 @@ impl Pipeline {
         let mut pipeline: Pipeline =
             serde_json::from_str(json).map_err(crate::error::ImportError::Json)?;
         crate::validate::migrate_legacy_sinks(&mut pipeline);
+        if pipeline.snippet.is_none() {
+            Self::expand_snippets_if_needed(&mut pipeline, None)?;
+        }
         crate::validate::validate_import(&pipeline)?;
         let warnings = crate::error::ImportWarnings {
             undefined_variables: crate::variables::validate_variable_references(&pipeline),
@@ -165,6 +268,8 @@ impl Pipeline {
             crate::node::NodeKind::Source(cfg) => cfg.cache_row_limit,
             crate::node::NodeKind::Transform(cfg) => cfg.cache_row_limit,
             crate::node::NodeKind::Sink(_) => None,
+            crate::node::NodeKind::Test(_) => None,
+            crate::node::NodeKind::Snippet(_) => None,
         };
         node_limit
             .or(self.cache_row_limit)
@@ -234,6 +339,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -250,6 +357,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -264,6 +373,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -278,6 +389,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 transform_node("a"),
@@ -404,6 +520,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         };
         let node = p.node(&NodeId::new("src")).unwrap();
         assert_eq!(p.effective_cache_row_limit(node), 500);
@@ -473,6 +591,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         };
 
         let populated = p.with_code_populated().unwrap();
@@ -504,6 +624,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         };
 
         let resolved = p.with_resolved_code().unwrap();
@@ -527,6 +649,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 Node {
@@ -541,6 +668,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
                 sink_node("sink"),
             ],

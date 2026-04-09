@@ -80,6 +80,19 @@ pub fn validate(pipeline: &Pipeline) -> Result<(), Vec<DagError>> {
                     errors.push(DagError::SinkMissingUpstream(node.id.clone()));
                 }
             }
+            NodeKind::Test(_) => {
+                // Test nodes are leaf nodes: they consume upstream data but
+                // produce no output for downstream nodes.
+                if !has_upstream.contains(&node.id) {
+                    errors.push(DagError::TestMissingUpstream(node.id.clone()));
+                }
+                if has_downstream.contains(&node.id) {
+                    errors.push(DagError::TestHasDownstream(node.id.clone()));
+                }
+            }
+            NodeKind::Snippet(_) => {
+                unreachable!("snippets must be expanded before DAG validation")
+            }
         }
     }
 
@@ -219,6 +232,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -235,6 +250,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -249,6 +266,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -262,6 +281,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 transform_node("xform"),
@@ -296,6 +320,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src_a"),
                 source_node("src_b"),
@@ -328,6 +357,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("a"),
                 transform_node("b"),
@@ -356,6 +390,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 transform_node("xform"),
@@ -379,6 +418,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![source_node("a"), source_node("b"), sink_node("out")],
             edges: vec![
                 Edge::new("a", "b"), // b is a source but has upstream
@@ -403,6 +447,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![],
             edges: vec![],
         };
@@ -421,6 +470,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![source_node("a"), source_node("a"), sink_node("out")],
             edges: vec![Edge::new("a", "out")],
         };
@@ -442,6 +496,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![
                 Edge::new("src", "ghost"), // ghost doesn't exist
@@ -464,6 +523,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 transform_node("a"),
@@ -500,6 +564,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![Edge::new("src", "sink"), Edge::new("src", "sink")],
         };
@@ -521,6 +590,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 sink_node("mid_sink"),
@@ -549,6 +623,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![transform_node("orphan_xform"), sink_node("sink")],
             edges: vec![Edge::new("orphan_xform", "sink")],
         };
@@ -571,6 +650,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![source_node("src")],
             edges: vec![],
         };
@@ -589,6 +673,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![
                 source_node("src"),
                 transform_node("a"),
@@ -632,5 +721,105 @@ mod tests {
         let json = serde_json::to_string(&var).unwrap();
         let var2: Variable = serde_json::from_str(&json).unwrap();
         assert_eq!(var2.var_type, crate::pipeline::VariableType::String);
+    }
+
+    fn test_node(id: &str) -> Node {
+        Node {
+            id: NodeId::new(id),
+            name: id.to_string(),
+            kind: NodeKind::Test(crate::node::TestConfig {
+                severity: crate::node::TestSeverity::Error,
+                assertions: vec![crate::node::Assertion::NotNull {
+                    columns: vec!["id".into()],
+                }],
+                max_violations_reported: 25,
+            }),
+            position: Position::default(),
+            pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
+        }
+    }
+
+    #[test]
+    fn test_node_valid_topology() {
+        // src -> xform -> test (valid: test is leaf with upstream)
+        let p = Pipeline {
+            name: "with_test".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
+            nodes: vec![
+                source_node("src"),
+                transform_node("xform"),
+                test_node("validate"),
+            ],
+            edges: vec![Edge::new("src", "xform"), Edge::new("xform", "validate")],
+        };
+        assert!(validate(&p).is_ok());
+    }
+
+    #[test]
+    fn test_node_missing_upstream() {
+        let p = Pipeline {
+            name: "bad_test".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
+            nodes: vec![source_node("src"), test_node("validate")],
+            edges: vec![], // no edges
+        };
+        let errs = validate(&p).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::TestMissingUpstream(_)))
+        );
+    }
+
+    #[test]
+    fn test_node_has_downstream() {
+        let p = Pipeline {
+            name: "bad_test_downstream".into(),
+            version: 1,
+            default_environment: "dev".into(),
+            variables: BTreeMap::new(),
+            environment_overrides: BTreeMap::new(),
+            sample_config: None,
+            cache_row_limit: None,
+            code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
+            nodes: vec![source_node("src"), test_node("validate"), sink_node("sink")],
+            edges: vec![
+                Edge::new("src", "validate"),
+                Edge::new("validate", "sink"), // test cannot have downstream
+            ],
+        };
+        let errs = validate(&p).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, DagError::TestHasDownstream(_)))
+        );
     }
 }

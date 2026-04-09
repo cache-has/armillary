@@ -359,6 +359,16 @@ pub fn compute_node_fingerprint(pipeline: &Pipeline, node: &flux_engine::node::N
             cfg.connector.hash(&mut hasher);
             cfg.config.to_string().hash(&mut hasher);
         }
+        NodeKind::Test(cfg) => {
+            "test".hash(&mut hasher);
+            // Hash the serialized assertions so cache invalidates on config change.
+            serde_json::to_string(cfg)
+                .unwrap_or_default()
+                .hash(&mut hasher);
+        }
+        NodeKind::Snippet(_) => {
+            unreachable!("snippets must be expanded before fingerprinting")
+        }
     }
 
     // Include sorted upstream edges so edge changes invalidate the cache.
@@ -484,6 +494,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: Default::default(),
+            outputs: Vec::new(),
             nodes: vec![
                 Node {
                     id: NodeId::new("src"),
@@ -495,6 +510,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
                 Node {
                     id: NodeId::new("xform"),
@@ -508,6 +525,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
             ],
             edges: vec![Edge::new("src", "xform")],

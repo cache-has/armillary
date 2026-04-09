@@ -17,11 +17,23 @@ mod plugin;
 mod secret;
 mod server;
 mod snapshot;
+mod snippet;
+mod udf;
 
 /// Exit code for pipeline execution failures (distinct from general errors).
 /// Used by `flux run` when the pipeline itself fails (vs. a CLI/config error).
 #[allow(dead_code)]
 const EXIT_PIPELINE_FAILURE: u8 = 2;
+
+/// Exit codes for `flux test`:
+/// 0 = all tests passed
+/// 1 = at least one test with severity=error failed
+/// 2 = warnings only (all severity=warn tests had failures, no errors)
+/// 3 = configuration error (invalid pipeline, no test nodes, etc.)
+const EXIT_TEST_PASS: i32 = 0;
+const EXIT_TEST_FAIL: i32 = 1;
+const EXIT_TEST_WARN: i32 = 2;
+const EXIT_TEST_CONFIG_ERROR: i32 = 3;
 
 /// Output format: human-readable (default) or JSON for scripting.
 #[derive(Debug, Clone, Copy)]
@@ -174,6 +186,33 @@ enum Command {
         #[command(subcommand)]
         action: snapshot::SnapshotAction,
     },
+    /// Inspect reusable SQL UDFs declared in a pipeline's `udfs_dir`.
+    Udf {
+        #[command(subcommand)]
+        action: udf::UdfAction,
+    },
+    /// Inspect reusable pipeline snippets declared in a pipeline's `snippets_dir`.
+    Snippet {
+        #[command(subcommand)]
+        action: snippet::SnippetAction,
+    },
+    /// Run data quality tests in a pipeline (skip sink writes).
+    Test {
+        /// Pipeline name or UUID (omit when using --all).
+        pipeline: Option<String>,
+        /// Environment to execute in (e.g., dev, prod).
+        #[arg(long, short)]
+        env: Option<String>,
+        /// Variable overrides in key=value format (repeatable).
+        #[arg(long, short = 'V', value_parser = pipeline::parse_var)]
+        var: Vec<(String, String)>,
+        /// Run only a specific test node by name or ID.
+        #[arg(long)]
+        node: Option<String>,
+        /// Run tests across all pipelines.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -311,6 +350,28 @@ fn run(cli: Cli, format: OutputFormat, metadata_url: Option<&str>) -> Result<()>
         Some(Command::Snapshot { action }) => {
             snapshot::handle(action, format, metadata_url).context("snapshot command failed")
         }
+
+        Some(Command::Udf { action }) => udf::handle(action, format).context("udf command failed"),
+
+        Some(Command::Snippet { action }) => {
+            snippet::handle(action, format).context("snippet command failed")
+        }
+
+        Some(Command::Test {
+            pipeline,
+            env,
+            var,
+            node,
+            all,
+        }) => pipeline::test(
+            pipeline.as_deref(),
+            env.as_deref(),
+            var,
+            node.as_deref(),
+            all,
+            format,
+            metadata_url,
+        ),
     }
 }
 
@@ -1245,5 +1306,57 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(cli.command, Some(Command::Metadata { .. })));
+    }
+
+    #[test]
+    fn parse_test_single_pipeline() {
+        let cli = Cli::try_parse_from(["horizon-flux", "test", "my-pipe"]).unwrap();
+        match cli.command {
+            Some(Command::Test {
+                pipeline,
+                env,
+                var,
+                node,
+                all,
+            }) => {
+                assert_eq!(pipeline.as_deref(), Some("my-pipe"));
+                assert!(env.is_none());
+                assert!(var.is_empty());
+                assert!(node.is_none());
+                assert!(!all);
+            }
+            _ => panic!("expected Test"),
+        }
+    }
+
+    #[test]
+    fn parse_test_with_node_filter() {
+        let cli = Cli::try_parse_from([
+            "horizon-flux",
+            "test",
+            "my-pipe",
+            "--node",
+            "validate_orders",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Test { pipeline, node, .. }) => {
+                assert_eq!(pipeline.as_deref(), Some("my-pipe"));
+                assert_eq!(node.as_deref(), Some("validate_orders"));
+            }
+            _ => panic!("expected Test"),
+        }
+    }
+
+    #[test]
+    fn parse_test_all() {
+        let cli = Cli::try_parse_from(["horizon-flux", "test", "--all"]).unwrap();
+        match cli.command {
+            Some(Command::Test { pipeline, all, .. }) => {
+                assert!(pipeline.is_none());
+                assert!(all);
+            }
+            _ => panic!("expected Test"),
+        }
     }
 }

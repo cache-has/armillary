@@ -65,6 +65,8 @@ fn csv_source_node(id: &str, path: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -79,6 +81,8 @@ fn parquet_source_node(id: &str, path: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -95,6 +99,8 @@ fn sql_node(id: &str, sql: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -109,6 +115,8 @@ fn csv_sink_node(id: &str, path: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -123,6 +131,8 @@ fn parquet_sink_node(id: &str, path: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -136,6 +146,11 @@ fn pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
         sample_config: None,
         cache_row_limit: None,
         code_dir: None,
+        udfs_dir: None,
+        snippets_dir: None,
+        snippet: None,
+        params: BTreeMap::new(),
+        outputs: Vec::new(),
         nodes,
         edges,
     }
@@ -148,6 +163,55 @@ fn default_opts() -> ExecutionOptions {
 // ---------------------------------------------------------------------------
 // Full pipeline execution: source -> transform -> sink (real connectors)
 // ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pipeline_uses_udf_from_udfs_dir() {
+    // Source has a messy `name` column; a UDF normalizes it; the sink should
+    // see the normalized values. Verifies the full path: pipeline.udfs_dir
+    // → registry load → inline → SQL execution → sink output.
+    let dir = TempDir::new().unwrap();
+    let udfs_dir = dir.path().join("udfs");
+    std::fs::create_dir(&udfs_dir).unwrap();
+    std::fs::write(
+        udfs_dir.join("normalize_name.sql"),
+        "CREATE OR REPLACE FUNCTION normalize_name(s VARCHAR) RETURNS VARCHAR \
+         AS $$ LOWER(TRIM(s)) $$ LANGUAGE SQL IMMUTABLE;",
+    )
+    .unwrap();
+
+    let input = write_csv(
+        &dir,
+        "input.csv",
+        "id,name\n1,  Alice  \n2, BOB \n3,Carol\n",
+    );
+    let output = dir.path().join("out.csv");
+
+    let mut p = pipeline(
+        "udf_pipeline",
+        vec![
+            csv_source_node("src", &input),
+            sql_node("xform", "SELECT id, normalize_name(name) AS name FROM src"),
+            csv_sink_node("sink", output.to_str().unwrap()),
+        ],
+        vec![Edge::new("src", "xform"), Edge::new("xform", "sink")],
+    );
+    p.udfs_dir = Some(udfs_dir.to_string_lossy().into_owned());
+
+    let registry = default_registry().into_provider_registry();
+    let (_result, run) = PipelineExecutor::execute(&p, &registry, &default_opts())
+        .await
+        .expect("pipeline should succeed");
+    assert_eq!(run.status, RunStatus::Success);
+
+    let content = std::fs::read_to_string(&output).unwrap();
+    assert!(content.contains("alice"), "got: {content}");
+    assert!(content.contains("bob"), "got: {content}");
+    assert!(content.contains("carol"), "got: {content}");
+    assert!(
+        !content.contains("Alice"),
+        "Alice should be lowercased: {content}"
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn csv_source_sql_transform_csv_sink() {

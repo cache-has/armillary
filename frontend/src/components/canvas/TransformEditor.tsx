@@ -3,8 +3,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
-import type { ApiNode, ApiColumnInfo, ApiPreviewNodeResponse } from '../../api/pipelines';
-import { previewNode } from '../../api/pipelines';
+import type {
+  ApiNode,
+  ApiColumnInfo,
+  ApiPreviewNodeResponse,
+  ApiUdfInfo,
+} from '../../api/pipelines';
+import { fetchPipelineUdfs, previewNode } from '../../api/pipelines';
 import { JoinConfigurator } from './JoinConfigurator';
 import './transform-editor.css';
 
@@ -28,6 +33,8 @@ export interface TransformEditorProps {
   onCodeChange: (code: string) => void;
   /** Ref callback so parent can trigger preview imperatively. */
   onPreviewRef?: (run: () => void) => void;
+  /** Pipeline ID — when provided, fetches reusable SQL UDFs for autocomplete. */
+  pipelineId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,8 +193,10 @@ export function TransformEditor({
   code,
   onCodeChange,
   onPreviewRef,
+  pipelineId,
 }: TransformEditorProps) {
   const editorRef = useRef<MonacoEditor | null>(null);
+  const udfsRef = useRef<ApiUdfInfo[]>([]);
   const [preview, setPreview] = useState<ApiPreviewNodeResponse | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -257,6 +266,25 @@ export function TransformEditor({
   useEffect(() => {
     onPreviewRef?.(runPreview);
   }, [runPreview, onPreviewRef]);
+
+  // Load UDFs for autocomplete whenever the pipeline changes.
+  useEffect(() => {
+    if (!pipelineId || pipelineId === 'demo') {
+      udfsRef.current = [];
+      return;
+    }
+    let cancelled = false;
+    fetchPipelineUdfs(pipelineId)
+      .then((udfs) => {
+        if (!cancelled) udfsRef.current = udfs;
+      })
+      .catch(() => {
+        if (!cancelled) udfsRef.current = [];
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pipelineId]);
 
   // Debounced preview on code changes
   const handleCodeChange = useCallback(
@@ -336,6 +364,22 @@ export function TransformEditor({
             insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
             range,
             detail: 'DataFusion function',
+          });
+        }
+
+        // Reusable SQL UDFs (planning doc 29, Layer 1).
+        for (const udf of udfsRef.current) {
+          const placeholder = udf.params
+            .map((p, i) => `\${${i + 1}:${p.name}}`)
+            .join(', ');
+          suggestions.push({
+            label: udf.name,
+            kind: monaco.languages.CompletionItemKind.Function,
+            insertText: `${udf.name}(${placeholder})`,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            range,
+            detail: udf.signature,
+            documentation: `User-defined function (${udf.source})`,
           });
         }
 

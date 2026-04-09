@@ -12,7 +12,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use flux_datafusion::{
-    ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, compute_column_stats,
+    ColumnStats, ExecutionOptions, PipelineExecutor, PreviewOptions, RunId, UdfRegistry,
+    compute_column_stats,
 };
 use flux_engine::pipeline_store::PipelineId;
 use flux_engine::{NodeId, Pipeline, SampleConfig};
@@ -37,6 +38,7 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/export", get(export_pipeline))
         .route("/{id}/run", post(run_pipeline))
         .route("/{id}/preview", post(preview_pipeline))
+        .route("/{id}/udfs", get(list_pipeline_udfs))
         .route("/{id}/runs", get(list_runs))
         .route("/{id}/runs/{run_id}", get(get_run))
         .route(
@@ -299,6 +301,69 @@ async fn update_pipeline(
     }
 
     Ok(Json(PipelineResponse::from(record)))
+}
+
+/// Serializable UDF metadata for the SQL editor autocomplete.
+#[derive(Debug, Serialize)]
+pub struct UdfInfo {
+    pub name: String,
+    pub signature: String,
+    pub params: Vec<UdfParamInfo>,
+    pub return_type: Option<String>,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UdfParamInfo {
+    pub name: String,
+    pub data_type: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UdfsResponse {
+    udfs: Vec<UdfInfo>,
+}
+
+/// `GET /api/pipelines/:id/udfs` — list UDFs available to a pipeline (from
+/// its `udfs_dir`). Used by the SQL editor for autocomplete.
+async fn list_pipeline_udfs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<UdfsResponse>, (StatusCode, Json<ApiError>)> {
+    let pipeline_id = parse_pipeline_id(&id)?;
+    let record = state
+        .pipeline_store
+        .get(&pipeline_id)
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .ok_or_else(|| ApiError::not_found("pipeline", &id))?;
+
+    let dir = match record.pipeline.udfs_dir.as_deref() {
+        Some(d) => d,
+        None => return Ok(Json(UdfsResponse { udfs: Vec::new() })),
+    };
+
+    let registry = UdfRegistry::load_from_dir(std::path::Path::new(dir))
+        .map_err(|e| ApiError::internal(format!("failed to load UDFs: {e}")))?;
+
+    let udfs = registry
+        .iter()
+        .map(|d| UdfInfo {
+            name: d.name.clone(),
+            signature: d.signature(),
+            params: d
+                .params
+                .iter()
+                .map(|p| UdfParamInfo {
+                    name: p.name.clone(),
+                    data_type: p.data_type.clone(),
+                })
+                .collect(),
+            return_type: d.return_type.clone(),
+            source: d.source_path.display().to_string(),
+        })
+        .collect();
+
+    Ok(Json(UdfsResponse { udfs }))
 }
 
 /// `DELETE /api/pipelines/:id` — delete a pipeline.
@@ -842,6 +907,9 @@ async fn import_pipeline(
                     .collect::<Vec<_>>()
                     .join("; ")
             )),
+            flux_engine::ImportError::Snippet(se) => {
+                ApiError::bad_request(format!("snippet expansion failed: {se}"))
+            }
         })?;
 
     // Collect non-fatal warnings.

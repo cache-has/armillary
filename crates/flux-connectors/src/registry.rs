@@ -122,7 +122,11 @@ impl ConnectorRegistry {
                         }
                     }
                 }
-                flux_engine::node::NodeKind::Transform(_) => {}
+                flux_engine::node::NodeKind::Transform(_)
+                | flux_engine::node::NodeKind::Test(_) => {}
+                flux_engine::node::NodeKind::Snippet(_) => {
+                    unreachable!("snippets must be expanded before connector validation")
+                }
             }
         }
 
@@ -230,6 +234,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: Default::default(),
+            outputs: Vec::new(),
             nodes: vec![
                 Node {
                     id: NodeId::new("src"),
@@ -241,6 +250,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
                 Node {
                     id: NodeId::new("sink"),
@@ -252,6 +263,8 @@ mod tests {
                     }),
                     position: Position::default(),
                     pinned_position: false,
+                    snippet_parent: None,
+                    snippet_name: None,
                 },
             ],
             edges: vec![Edge::new("src", "sink")],
@@ -316,6 +329,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         });
         pipeline.edges = vec![Edge::new("src", "xform"), Edge::new("xform", "sink")];
 

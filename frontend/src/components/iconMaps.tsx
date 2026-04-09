@@ -6,6 +6,7 @@ import {
   IconSource,
   IconTransform,
   IconSink,
+  IconTest,
   IconFile,
   IconDatabase,
   IconGlobe,
@@ -17,6 +18,7 @@ export const roleIcon: Record<string, ReactNode> = {
   source: <IconSource />,
   transform: <IconTransform />,
   sink: <IconSink />,
+  test: <IconTest />,
 };
 
 export const paletteIcon: Record<string, ReactNode> = {
@@ -27,4 +29,5 @@ export const paletteIcon: Record<string, ReactNode> = {
   sql: <IconCode />,
   python: <IconTerminal />,
   stdout: <IconTerminal />,
+  test: <IconTest />,
 };

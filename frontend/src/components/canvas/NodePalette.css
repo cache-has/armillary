@@ -141,6 +141,10 @@
   border-color: #22c55e;
 }
 
+.node-palette__item--test:hover {
+  border-color: #f59e0b;
+}
+
 .node-palette__item-icon {
   font-size: 14px;
   flex-shrink: 0;

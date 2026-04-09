@@ -92,6 +92,11 @@
   background: rgba(34, 197, 94, 0.1);
 }
 
+.node-editor__role-badge--test {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
 .node-editor__spacer {
   flex: 1;
 }

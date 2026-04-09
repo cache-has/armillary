@@ -3,12 +3,13 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { usePipelineStore } from '../../stores/pipelineStore';
-import type { ApiNode, ApiColumnInfo, MaterializationPolicy } from '../../api/pipelines';
+import type { ApiNode, ApiColumnInfo, ApiAssertion, MaterializationPolicy, TestSeverity } from '../../api/pipelines';
 import { previewPipeline } from '../../api/pipelines';
 import { ConfirmDialog } from './ConfirmDialog';
 import { TransformEditor } from './TransformEditor';
 import { SourceEditor } from './SourceEditor';
 import { SinkEditor } from './SinkEditor';
+import { TestEditor } from './TestEditor';
 import './node-editor-modal.css';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,9 @@ export function NodeEditorModal() {
   const [localConnector, setLocalConnector] = useState('');
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [localMaterialization, setLocalMaterialization] = useState<MaterializationPolicy | undefined>(undefined);
+  const [localSeverity, setLocalSeverity] = useState<TestSeverity>('error');
+  const [localAssertions, setLocalAssertions] = useState<ApiAssertion[]>([]);
+  const [localMaxViolations, setLocalMaxViolations] = useState(25);
 
   // Input schemas and upstream data for transform editor
   const [inputSchemas, setInputSchemas] = useState<InputSchema[]>([]);
@@ -104,13 +108,16 @@ export function NodeEditorModal() {
     setLocalConnector(apiNode.connector ?? '');
     setLocalConfig((apiNode.config as Record<string, unknown>) ?? {});
     setLocalMaterialization(apiNode.materialization);
+    setLocalSeverity(apiNode.severity ?? 'error');
+    setLocalAssertions(apiNode.assertions ?? []);
+    setLocalMaxViolations(apiNode.max_violations_reported ?? 25);
     setDirty(false);
     setShowDiscardPrompt(false);
   }, [apiNode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load input schemas and upstream data for transforms
   useEffect(() => {
-    if (!editingNodeId || role !== 'transform' || !pipelineId || pipelineId === 'demo')
+    if (!editingNodeId || (role !== 'transform' && role !== 'test') || !pipelineId || pipelineId === 'demo')
       return;
 
     const controller = new AbortController();
@@ -188,12 +195,16 @@ export function NodeEditorModal() {
     if (!editingNodeId) return;
     setSaving(true);
     try {
-      const patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config' | 'materialization'>> = {
+      const patch: Partial<Pick<ApiNode, 'name' | 'mode' | 'code' | 'connector' | 'config' | 'materialization' | 'severity' | 'assertions' | 'max_violations_reported'>> = {
         name: localName,
       };
       if (role === 'transform') {
         patch.mode = localMode;
         patch.code = localCode;
+      } else if (role === 'test') {
+        patch.severity = localSeverity;
+        patch.assertions = localAssertions;
+        patch.max_violations_reported = localMaxViolations;
       } else {
         patch.connector = localConnector;
         patch.config = localConfig;
@@ -208,7 +219,7 @@ export function NodeEditorModal() {
     } finally {
       setSaving(false);
     }
-  }, [editingNodeId, localName, localMode, localCode, localConnector, localConfig, localMaterialization, role, updateNodeConfig]);
+  }, [editingNodeId, localName, localMode, localCode, localConnector, localConfig, localMaterialization, localSeverity, localAssertions, localMaxViolations, role, updateNodeConfig]);
 
   // -----------------------------------------------------------------------
   // Keyboard shortcuts
@@ -271,6 +282,21 @@ export function NodeEditorModal() {
 
   const handleConfigChange = useCallback((config: Record<string, unknown>) => {
     setLocalConfig(config);
+    setDirty(true);
+  }, []);
+
+  const handleSeverityChange = useCallback((severity: TestSeverity) => {
+    setLocalSeverity(severity);
+    setDirty(true);
+  }, []);
+
+  const handleAssertionsChange = useCallback((assertions: ApiAssertion[]) => {
+    setLocalAssertions(assertions);
+    setDirty(true);
+  }, []);
+
+  const handleMaxViolationsChange = useCallback((n: number) => {
+    setLocalMaxViolations(n);
     setDirty(true);
   }, []);
 
@@ -384,6 +410,7 @@ export function NodeEditorModal() {
                   onModeChange={handleModeChange}
                   onCodeChange={handleCodeChange}
                   onPreviewRef={setPreviewRunner}
+                  pipelineId={pipelineId ?? undefined}
                 />
               )}
               {role === 'source' && (
@@ -394,6 +421,17 @@ export function NodeEditorModal() {
                   onConfigChange={handleConfigChange}
                   onConnectorChange={handleConnectorChange}
                   pipelineVariables={pipelineVariables}
+                />
+              )}
+              {role === 'test' && (
+                <TestEditor
+                  severity={localSeverity}
+                  assertions={localAssertions}
+                  maxViolationsReported={localMaxViolations}
+                  inputSchemas={inputSchemas}
+                  onSeverityChange={handleSeverityChange}
+                  onAssertionsChange={handleAssertionsChange}
+                  onMaxViolationsChange={handleMaxViolationsChange}
                 />
               )}
               {role === 'sink' && (

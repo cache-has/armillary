@@ -11,7 +11,7 @@
 use crate::environment::{Environment, TableOverride};
 use crate::error::{EnvironmentError, IncrementalStateError, RunStoreError};
 use crate::incremental_state::{IncrementalSchemaRecord, IncrementalState};
-use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus};
+use crate::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use std::time::SystemTime;
 
 /// Backend-agnostic storage interface for pipeline execution history.
@@ -39,6 +39,13 @@ pub trait RunStorage: Send + Sync {
 
     /// Persist statistics for a single node within a run.
     fn save_node_stats(&self, run_id: &RunId, stats: &NodeRunStats) -> Result<(), RunStoreError>;
+
+    /// Persist test results for a run.
+    fn save_test_results(
+        &self,
+        run_id: &RunId,
+        results: &[TestResultSummary],
+    ) -> Result<(), RunStoreError>;
 
     /// Load a run by ID, including its node stats.
     fn get_run(&self, run_id: &RunId) -> Result<Option<PipelineRun>, RunStoreError>;

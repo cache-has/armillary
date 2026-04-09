@@ -123,6 +123,98 @@ async fn create_and_get() {
 }
 
 #[tokio::test]
+async fn list_udfs_returns_loaded_definitions() {
+    let state = test_state();
+    let app = test_router(state.clone());
+
+    // Stage a UDF on disk.
+    let udfs_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        udfs_dir.path().join("normalize_name.sql"),
+        r#"CREATE OR REPLACE FUNCTION normalize_name(s VARCHAR) RETURNS VARCHAR
+AS $$ LOWER(TRIM(s)) $$ LANGUAGE SQL IMMUTABLE;"#,
+    )
+    .unwrap();
+
+    // Create a pipeline pointing at it.
+    let pipeline = json!({
+        "name": "udf-pipe",
+        "udfs_dir": udfs_dir.path().to_str().unwrap(),
+        "nodes": [],
+        "edges": []
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines")
+                .header("content-type", "application/json")
+                .body(Body::from(pipeline.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let id = body_json(resp.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Hit the UDFs endpoint.
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/pipelines/{id}/udfs"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let udfs = body["udfs"].as_array().unwrap();
+    assert_eq!(udfs.len(), 1);
+    assert_eq!(udfs[0]["name"], "normalize_name");
+    assert_eq!(udfs[0]["params"][0]["name"], "s");
+    assert!(udfs[0]["signature"].as_str().unwrap().contains("->"));
+}
+
+#[tokio::test]
+async fn list_udfs_empty_when_no_udfs_dir() {
+    let state = test_state();
+    let app = test_router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/pipelines")
+                .header("content-type", "application/json")
+                .body(Body::from(test_pipeline_json("no-udfs").to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let id = body_json(resp.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let app = test_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/pipelines/{id}/udfs"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["udfs"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn create_duplicate_name_returns_conflict() {
     let state = test_state();
     let app = test_router(state.clone());

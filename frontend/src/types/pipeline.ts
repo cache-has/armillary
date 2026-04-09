@@ -7,8 +7,8 @@ import type {
   MaterializationReceipt,
 } from '../api/pipelines';
 
-/** The three fundamental node roles in a pipeline DAG. */
-export type NodeRole = 'source' | 'transform' | 'sink';
+/** The fundamental node roles in a pipeline DAG. */
+export type NodeRole = 'source' | 'transform' | 'sink' | 'test';
 
 /** Execution status of a pipeline node. */
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error';
@@ -19,11 +19,31 @@ export interface SchemaColumn {
   dataType: string;
 }
 
+/** Group node data for collapsed snippet expansions (`type === 'snippetGroup'`). */
+export interface SnippetGroupData extends Record<string, unknown> {
+  /** Display name (the snippet definition's `snippet` field). */
+  snippetName: string;
+  /** The call-site ID in the parent pipeline. Equals the React Flow node id. */
+  callSiteId: string;
+  /** IDs of the inner nodes that belong to this group. */
+  childIds: string[];
+  /** Whether the group is currently collapsed (true) or expanded (false). */
+  collapsed: boolean;
+}
+
+/** A snippet-group React Flow node. */
+export type SnippetGroupNode = Node<SnippetGroupData, 'snippetGroup'>;
+
 /** Application-specific data stored on each React Flow node. */
 export interface PipelineNodeData extends Record<string, unknown> {
   label: string;
   role: NodeRole;
   status: NodeStatus;
+  /** If set, this node is part of an expanded snippet (call-site id of the
+   *  outermost snippet call). Used for collapsible-group rendering. */
+  snippetParent?: string;
+  /** Snippet name for the outermost call this node belongs to. */
+  snippetName?: string;
   /** Whether this node's position has been manually pinned by the user. */
   pinnedPosition: boolean;
   /** Whether config is overridden in the current environment. */
@@ -44,6 +64,10 @@ export interface PipelineNodeData extends Record<string, unknown> {
 
 /** A pipeline node is a React Flow Node carrying our custom data. */
 export type PipelineNode = Node<PipelineNodeData, 'pipeline'>;
+
+/** A node displayed on the canvas — either a regular pipeline node or a
+ *  collapsed snippet-group placeholder. */
+export type CanvasNode = PipelineNode | SnippetGroupNode;
 
 /** Application-specific data stored on each React Flow edge. */
 export interface PipelineEdgeData extends Record<string, unknown> {

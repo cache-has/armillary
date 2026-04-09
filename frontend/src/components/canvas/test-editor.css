@@ -1,0 +1,285 @@
+/* Copyright (c) 2026 Horizon Analytic Studios, LLC. All rights reserved. */
+/* SPDX-License-Identifier: MIT OR Apache-2.0 */
+
+.test-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px 20px;
+  gap: 16px;
+}
+
+.test-editor__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.test-editor__section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text, #6b6375);
+}
+
+.test-editor__row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.test-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.test-editor__field--flex {
+  flex: 1;
+}
+
+.test-editor__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-h, #08060d);
+}
+
+.test-editor__select {
+  font-size: 13px;
+  font-family: var(--sans);
+  color: var(--text-h, #08060d);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.test-editor__select:focus {
+  border-color: var(--accent, #a855f7);
+}
+
+.test-editor__input {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.test-editor__input:focus {
+  border-color: var(--accent, #a855f7);
+}
+
+.test-editor__input--wide {
+  width: 100%;
+}
+
+.test-editor__textarea {
+  font-size: 13px;
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 6px 8px;
+  outline: none;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.test-editor__textarea:focus {
+  border-color: var(--accent, #a855f7);
+}
+
+/* Assertion cards */
+.test-editor__assertions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.test-editor__assertion-card {
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg, #fff);
+}
+
+.test-editor__assertion-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-editor__assertion-kind {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-h, #08060d);
+  flex: 1;
+}
+
+.test-editor__remove-btn {
+  font-size: 16px;
+  color: var(--text, #6b6375);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+}
+
+.test-editor__remove-btn:hover {
+  color: #ef4444;
+}
+
+.test-editor__assertion-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Column multi-select chips */
+.test-editor__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  min-height: 32px;
+  align-items: center;
+}
+
+.test-editor__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+}
+
+.test-editor__chip-remove {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.test-editor__chip-remove:hover {
+  color: #ef4444;
+}
+
+.test-editor__chip-add {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--accent, #a855f7);
+  cursor: pointer;
+}
+
+/* Values list for accepted_values */
+.test-editor__values-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.test-editor__value-input {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-h, #08060d);
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 3px;
+  padding: 2px 6px;
+  outline: none;
+  width: 100%;
+}
+
+.test-editor__value-input:focus {
+  border-color: var(--accent, #a855f7);
+}
+
+/* Add assertion button */
+.test-editor__add-btn {
+  font-size: 12px;
+  font-family: var(--sans);
+  color: var(--accent, #a855f7);
+  background: none;
+  border: 1px dashed var(--border, #e5e4e7);
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.test-editor__add-btn:hover {
+  border-color: var(--accent, #a855f7);
+}
+
+.test-editor__hint {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.test-editor__empty {
+  font-size: 12px;
+  color: var(--text, #6b6375);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+/* Column dropdown */
+.test-editor__col-dropdown {
+  position: absolute;
+  z-index: 10;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e5e4e7);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  max-height: 160px;
+  overflow-y: auto;
+  min-width: 160px;
+}
+
+.test-editor__col-option {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  text-align: left;
+  color: var(--text-h, #08060d);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.test-editor__col-option:hover {
+  background: var(--accent-bg, rgba(170, 59, 255, 0.1));
+}
+
+.test-editor__col-type {
+  color: var(--text, #6b6375);
+  font-size: 11px;
+  margin-left: 8px;
+}

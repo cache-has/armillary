@@ -47,7 +47,7 @@ arrow = "58"
 object_store = { version = "0.13", features = ["aws", "gcp", "azure", "http"] }
 url = "2"
 polars = { version = "0.53", features = ["lazy"] }
-sqlparser = "0.61"
+sqlparser = { version = "0.61", features = ["visitor"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

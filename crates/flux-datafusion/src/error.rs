@@ -32,6 +32,9 @@ pub enum NodeErrorKind {
     #[error("SQL preprocessing error: {0}")]
     Preprocess(#[from] crate::friendly_sql::PreprocessError),
 
+    #[error("UDF error: {0}")]
+    Udf(#[from] crate::udfs::UdfError),
+
     #[error("Python transform error: {0}")]
     Python(String),
 
@@ -51,6 +54,15 @@ pub enum NodeErrorKind {
         path: String,
         source: std::io::Error,
     },
+
+    #[error("test assertion failed: {summary}")]
+    TestAssertionFailed {
+        summary: String,
+        result: crate::test_assertion::TestNodeResult,
+    },
+
+    #[error("test execution error: {0}")]
+    TestExecution(String),
 }
 
 /// Top-level executor error.

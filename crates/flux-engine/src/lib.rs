@@ -10,6 +10,7 @@ pub mod pipeline;
 pub mod pipeline_store;
 pub mod sample;
 pub mod snapshot;
+pub mod snippet;
 pub mod storage;
 pub mod validate;
 pub mod variables;
@@ -25,7 +26,7 @@ pub use materialization::{
     ChangeDetection, FirstRun, HardDeletes, MaterializationError, MaterializationPolicy,
     OnSchemaChange, ReadMode, SnapshotPolicy, Watermark, WatermarkType, WriteStrategy,
 };
-pub use node::{Node, NodeId, NodeKind};
+pub use node::{Assertion, Node, NodeId, NodeKind, TestConfig, TestSeverity};
 pub use pipeline::Pipeline;
 pub use pipeline_store::{
     PipelineId, PipelineRecord, PipelineStoreError, PipelineVersion, SqlitePipelineStore,
@@ -36,6 +37,7 @@ pub use snapshot::{
     RowClassification, ScdColumnType, ScdMetadataColumn, SnapshotMergeStats, SnapshotPlan,
     StagedRow, check_hash, plan_snapshot_merge, scd_metadata_columns, surrogate_key,
 };
+pub use snippet::{SnippetError, SnippetRegistry, expand_snippets};
 pub use storage::PipelineStorage;
 pub use variables::{BuiltinContext, ResolvedVariables, VariableWarning};
 

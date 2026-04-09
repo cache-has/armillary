@@ -203,6 +203,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -217,6 +219,8 @@ mod tests {
             }),
             position: Position::default(),
             pinned_position: false,
+            snippet_parent: None,
+            snippet_name: None,
         }
     }
 
@@ -230,6 +234,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: BTreeMap::new(),
+            outputs: Vec::new(),
             nodes: vec![source_node("src"), sink_node("sink")],
             edges: vec![Edge::new("src", "sink")],
         }

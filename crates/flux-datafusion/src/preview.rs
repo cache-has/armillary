@@ -148,8 +148,8 @@ impl PipelineExecutor {
 
             let node_start = Instant::now();
 
-            // Sinks are always skipped — they write, not read.
-            if node.kind.is_sink() {
+            // Sinks and tests are always skipped — they write/assert, not read.
+            if node.kind.is_sink() || node.kind.is_test() {
                 node_results.insert(
                     node_id.clone(),
                     PreviewNodeResult {
@@ -318,12 +318,28 @@ impl PipelineExecutor {
                 let batches = match xform_cfg.mode {
                     flux_engine::node::TransformMode::Sql => {
                         let interpolated_sql = resolved_vars.interpolate(&code);
-                        Self::execute_sql_transform(&interpolated_sql, upstream_data, None, None)
-                            .await
-                            .map_err(|kind| ExecutorError::Node {
-                                node_id: node_id.clone(),
-                                kind,
-                            })?
+                        let udf_registry = match pipeline.udfs_dir.as_deref() {
+                            Some(dir) => Some(Arc::new(
+                                crate::udfs::UdfRegistry::load_from_dir(std::path::Path::new(dir))
+                                    .map_err(|e| ExecutorError::Node {
+                                        node_id: node_id.clone(),
+                                        kind: e.into(),
+                                    })?,
+                            )),
+                            None => None,
+                        };
+                        Self::execute_sql_transform(
+                            &interpolated_sql,
+                            upstream_data,
+                            None,
+                            None,
+                            udf_registry.as_ref(),
+                        )
+                        .await
+                        .map_err(|kind| ExecutorError::Node {
+                            node_id: node_id.clone(),
+                            kind,
+                        })?
                     }
                     flux_engine::node::TransformMode::Python => {
                         let py_config = crate::python_runtime::PythonConfig::default();
@@ -398,6 +414,17 @@ impl PipelineExecutor {
                 duration: node_start.elapsed(),
                 status: PreviewStatus::Skipped,
             }),
+            NodeKind::Test(_) => Ok(PreviewNodeResult {
+                node_id: node_id.clone(),
+                schema: Arc::new(arrow::datatypes::Schema::empty()),
+                batches: Vec::new(),
+                row_count: 0,
+                duration: node_start.elapsed(),
+                status: PreviewStatus::Skipped,
+            }),
+            NodeKind::Snippet(_) => {
+                unreachable!("snippets must be expanded before preview")
+            }
         }
     }
 }

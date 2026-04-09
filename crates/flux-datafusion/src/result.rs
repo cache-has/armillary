@@ -4,6 +4,7 @@
 //! Pipeline execution result.
 
 use crate::stats::NodeStats;
+use crate::test_assertion::TestNodeResult;
 use arrow::record_batch::RecordBatch;
 use flux_engine::NodeId;
 use std::collections::HashMap;
@@ -19,6 +20,8 @@ pub struct PipelineResult {
     pub node_outputs: HashMap<NodeId, Vec<RecordBatch>>,
     /// Per-node execution statistics, in execution order.
     pub node_stats: Vec<NodeStats>,
+    /// Results from test nodes executed during the pipeline run.
+    pub test_results: Vec<TestNodeResult>,
 }
 
 impl PipelineResult {

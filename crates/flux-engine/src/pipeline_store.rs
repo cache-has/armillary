@@ -625,6 +625,11 @@ mod tests {
             sample_config: None,
             cache_row_limit: None,
             code_dir: None,
+            udfs_dir: None,
+            snippets_dir: None,
+            snippet: None,
+            params: Default::default(),
+            outputs: Vec::new(),
             nodes: vec![],
             edges: vec![],
         }

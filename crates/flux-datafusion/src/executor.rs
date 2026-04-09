@@ -15,17 +15,19 @@ use crate::provider::{
 };
 use crate::resolver::EnvironmentResolver;
 use crate::result::PipelineResult;
-use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus};
+use crate::run::{ExecutionEvent, NodeRunStats, PipelineRun, RunStatus, TestResultSummary};
 use crate::schema_diff::{SchemaAction, apply_policy, compute_schema_diff, schema_fingerprint};
 use crate::session::SessionFactory;
 use crate::stats::NodeStats;
 use crate::storage::{IncrementalStateStorage, RunStorage};
+use crate::udfs::UdfRegistry;
 use crate::watermark::{
     build_filter_expr, fold_max_watermark, scalar_to_stored, stored_to_scalar,
     watermark_type_matches,
 };
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
+use datafusion::common::TableReference;
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
 use flux_engine::node::{NodeKind, SourceConfig, TransformMode};
@@ -163,6 +165,33 @@ impl PipelineExecutor {
         dag::validate(pipeline).map_err(ExecutorError::Validation)?;
         let order = dag::topological_sort(pipeline);
 
+        // Load reusable SQL UDFs (planning doc 29, Layer 1). Errors here are
+        // surfaced as a node failure on the first SQL transform we can find,
+        // since UDFs only affect SQL transforms — that's the most actionable
+        // place to land the message. If no SQL transform exists the load is
+        // a no-op anyway.
+        let udf_registry = match pipeline.udfs_dir.as_deref() {
+            Some(dir) => UdfRegistry::load_from_dir(std::path::Path::new(dir)).map_err(|e| {
+                let target = pipeline
+                    .nodes
+                    .iter()
+                    .find(|n| {
+                        matches!(
+                            &n.kind,
+                            NodeKind::Transform(cfg) if matches!(cfg.mode, TransformMode::Sql)
+                        )
+                    })
+                    .map(|n| n.id.clone())
+                    .unwrap_or_else(|| NodeId::from("<udf-load>"));
+                ExecutorError::Node {
+                    node_id: target,
+                    kind: e.into(),
+                }
+            })?,
+            None => UdfRegistry::new(),
+        };
+        let udf_registry = Arc::new(udf_registry);
+
         // Doc 27 pre-pass: walk every incremental sink, load state, and
         // build per-source watermark filters before any I/O. Hard errors
         // here surface as a node failure on the *first* incremental sink
@@ -240,6 +269,7 @@ impl PipelineExecutor {
 
         let mut outputs: HashMap<NodeId, Vec<RecordBatch>> = HashMap::new();
         let mut stats: Vec<NodeStats> = Vec::new();
+        let mut test_results: Vec<crate::test_assertion::TestNodeResult> = Vec::new();
 
         for node_id in &order {
             // Check cancellation before each node.
@@ -354,6 +384,7 @@ impl PipelineExecutor {
                                             data,
                                             options.environment_resolver.as_ref(),
                                             options.session_factory.as_deref(),
+                                            Some(&udf_registry),
                                         )
                                         .await
                                     }
@@ -449,6 +480,60 @@ impl PipelineExecutor {
                         }
                     }
                 }
+
+                NodeKind::Test(test_cfg) => {
+                    let upstream_ids = pipeline.upstream_of(node_id);
+                    match Self::gather_upstream(&upstream_ids, &outputs, &mut rows_in) {
+                        Ok(data) => {
+                            match crate::test_assertion::execute_test(node_id, test_cfg, data).await
+                            {
+                                Ok((batches, test_result)) => {
+                                    emit(
+                                        &options.progress,
+                                        ExecutionEvent::TestNodePassed {
+                                            run_id: run.id.clone(),
+                                            node_id: node_id.clone(),
+                                            assertions_count: test_result.assertions.len(),
+                                        },
+                                    );
+                                    test_results.push(test_result);
+                                    Ok(batches)
+                                }
+                                Err(NodeErrorKind::TestAssertionFailed {
+                                    ref summary,
+                                    ref result,
+                                }) => {
+                                    let failures: Vec<String> = result
+                                        .assertions
+                                        .iter()
+                                        .filter(|a| !a.passed)
+                                        .filter_map(|a| a.message.clone())
+                                        .collect();
+                                    emit(
+                                        &options.progress,
+                                        ExecutionEvent::TestNodeFailed {
+                                            run_id: run.id.clone(),
+                                            node_id: node_id.clone(),
+                                            severity: result.severity,
+                                            failures,
+                                        },
+                                    );
+                                    test_results.push(result.clone());
+                                    Err(NodeErrorKind::TestAssertionFailed {
+                                        summary: summary.clone(),
+                                        result: result.clone(),
+                                    })
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+
+                NodeKind::Snippet(_) => {
+                    unreachable!("snippets must be expanded before execution")
+                }
             };
 
             let node_end = Instant::now();
@@ -535,11 +620,18 @@ impl PipelineExecutor {
                     );
 
                     // Finalize as failed.
+                    run.test_results = test_results
+                        .iter()
+                        .map(TestResultSummary::from_test_node_result)
+                        .collect();
                     let end_wall = SystemTime::now();
                     run.status = RunStatus::Failed;
                     run.end_time = Some(end_wall);
                     run.error = Some(error_msg);
                     if let Some(store) = &options.run_store {
+                        if !run.test_results.is_empty() {
+                            let _ = store.save_test_results(&run.id, &run.test_results);
+                        }
                         let _ = store.finish_run(
                             &run.id,
                             RunStatus::Failed,
@@ -576,9 +668,16 @@ impl PipelineExecutor {
         );
 
         // Finalize as success.
+        run.test_results = test_results
+            .iter()
+            .map(TestResultSummary::from_test_node_result)
+            .collect();
         run.status = RunStatus::Success;
         run.end_time = Some(run_end_wall);
         if let Some(store) = &options.run_store {
+            if !run.test_results.is_empty() {
+                let _ = store.save_test_results(&run.id, &run.test_results);
+            }
             let _ = store.finish_run(&run.id, RunStatus::Success, run_end_wall, None);
         }
 
@@ -597,6 +696,7 @@ impl PipelineExecutor {
             end_time: run_end,
             node_outputs: outputs,
             node_stats: stats,
+            test_results,
         };
 
         Ok((pipeline_result, run))
@@ -642,7 +742,7 @@ impl PipelineExecutor {
 
         let provider_schema = table_provider.schema();
         let table_name = node_id.to_string();
-        ctx.register_table(table_name.as_str(), table_provider)?;
+        ctx.register_table(TableReference::bare(table_name.as_str()), table_provider)?;
         let mut df = ctx
             .sql(&format!("SELECT * FROM \"{}\"", table_name))
             .await?;
@@ -714,6 +814,7 @@ impl PipelineExecutor {
         upstream_data: HashMap<NodeId, &Vec<RecordBatch>>,
         resolver: Option<&Arc<EnvironmentResolver>>,
         session_factory: Option<&SessionFactory>,
+        udf_registry: Option<&Arc<UdfRegistry>>,
     ) -> Result<Vec<RecordBatch>, NodeErrorKind> {
         let ctx = match session_factory {
             Some(factory) => factory.create_context(),
@@ -738,12 +839,23 @@ impl PipelineExecutor {
             let (schema, data) = (batches[0].schema(), vec![batches.to_vec()]);
             table_schemas.insert(node_id.to_string(), schema.clone());
             let mem_table = MemTable::try_new(schema, data)?;
-            ctx.register_table(node_id.to_string().as_str(), Arc::new(mem_table))?;
+            ctx.register_table(
+                TableReference::bare(node_id.to_string()),
+                Arc::new(mem_table),
+            )?;
         }
+
+        // Inline reusable SQL UDFs (planning doc 29, Layer 1) before any
+        // other preprocessing — UDF bodies may themselves use friendly SQL
+        // constructs, so we want them to flow through `preprocess_sql` next.
+        let inlined_sql = match udf_registry {
+            Some(reg) if !reg.is_empty() => reg.inline(sql)?,
+            _ => sql.to_string(),
+        };
 
         // Preprocess friendly SQL syntax (GROUP BY ALL, EXCLUDE, COLUMNS, bare FROM)
         // into standard SQL that DataFusion understands.
-        let processed_sql = crate::friendly_sql::preprocess_sql(sql, &table_schemas)?;
+        let processed_sql = crate::friendly_sql::preprocess_sql(&inlined_sql, &table_schemas)?;
 
         let df = ctx.sql(&processed_sql).await?;
         let df_schema = df.schema();

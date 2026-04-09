@@ -119,6 +119,8 @@ fn source_node(id: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -135,6 +137,8 @@ fn sql_transform_node(id: &str, sql: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -149,6 +153,8 @@ fn sink_node(id: &str) -> Node {
         }),
         position: Position::default(),
         pinned_position: false,
+        snippet_parent: None,
+        snippet_name: None,
     }
 }
 
@@ -162,6 +168,11 @@ fn make_pipeline(name: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Pipeline {
         sample_config: None,
         cache_row_limit: None,
         code_dir: None,
+        udfs_dir: None,
+        snippets_dir: None,
+        snippet: None,
+        params: BTreeMap::new(),
+        outputs: Vec::new(),
         nodes,
         edges,
     }

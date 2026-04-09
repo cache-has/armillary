@@ -163,14 +163,18 @@ async fn preview_node(
 
             let batches = tokio::time::timeout(PREVIEW_TIMEOUT, async {
                 match mode {
-                    TransformMode::Sql => {
-                        PipelineExecutor::execute_sql_transform(&code, upstream_refs, None, None)
-                            .await
-                            .map_err(|e| {
-                                error!(error = %e, "SQL transform preview failed");
-                                ApiError::internal(e.to_string())
-                            })
-                    }
+                    TransformMode::Sql => PipelineExecutor::execute_sql_transform(
+                        &code,
+                        upstream_refs,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "SQL transform preview failed");
+                        ApiError::internal(e.to_string())
+                    }),
                     TransformMode::Python => {
                         let variables = var_resolver
                             .as_ref()

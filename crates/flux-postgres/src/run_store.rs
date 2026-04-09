@@ -7,7 +7,7 @@ use crate::block_on;
 use deadpool_postgres::Pool;
 use flux_datafusion::error::{IncrementalStateError, RunStoreError};
 use flux_datafusion::incremental_state::{IncrementalSchemaRecord, IncrementalState};
-use flux_datafusion::run::{NodeRunStats, PipelineRun, RunId, RunStatus};
+use flux_datafusion::run::{NodeRunStats, PipelineRun, RunId, RunStatus, TestResultSummary};
 use flux_datafusion::storage::{IncrementalStateStorage, RunStorage};
 use flux_engine::NodeId;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -101,6 +101,26 @@ impl RunStorage for PostgresRunStore {
         })
     }
 
+    fn save_test_results(
+        &self,
+        run_id: &RunId,
+        results: &[TestResultSummary],
+    ) -> Result<(), RunStoreError> {
+        block_on(async {
+            let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
+            let json = serde_json::to_string(results)
+                .map_err(|e| RunStoreError::Database(format!("failed to serialize test results: {e}")))?;
+            client
+                .execute(
+                    "UPDATE pipeline_runs SET test_results = $1 WHERE id = $2",
+                    &[&json, &run_id.0.to_string()],
+                )
+                .await
+                .map_err(pg_err)?;
+            Ok(())
+        })
+    }
+
     fn save_node_stats(&self, run_id: &RunId, stats: &NodeRunStats) -> Result<(), RunStoreError> {
         block_on(async {
             let client = crate::retry::get_client(&self.pool).await.map_err(pg_err)?;
@@ -144,7 +164,8 @@ impl RunStorage for PostgresRunStore {
 
             let row = client
                 .query_opt(
-                    "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error
+                    "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                            test_results
                      FROM pipeline_runs WHERE id = $1",
                     &[&run_id.0.to_string()],
                 )
@@ -173,7 +194,8 @@ impl RunStorage for PostgresRunStore {
                 Some(name) => {
                     client
                         .query(
-                            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error
+                            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                                    test_results
                              FROM pipeline_runs
                              WHERE pipeline_name = $1
                              ORDER BY start_time_ms DESC NULLS LAST
@@ -186,7 +208,8 @@ impl RunStorage for PostgresRunStore {
                 None => {
                     client
                         .query(
-                            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error
+                            "SELECT id, pipeline_name, environment, status, start_time_ms, end_time_ms, error,
+                                    test_results
                              FROM pipeline_runs
                              ORDER BY start_time_ms DESC NULLS LAST
                              LIMIT $1",
@@ -248,6 +271,11 @@ fn row_to_pipeline_run(row: &tokio_postgres::Row) -> Result<PipelineRun, RunStor
     let status_str: String = row.get(3);
     let start_ms: Option<i64> = row.get(4);
     let end_ms: Option<i64> = row.get(5);
+    let test_results_json: Option<String> = row.get(7);
+    let test_results = test_results_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
 
     Ok(PipelineRun {
         id: RunId(
@@ -262,6 +290,7 @@ fn row_to_pipeline_run(row: &tokio_postgres::Row) -> Result<PipelineRun, RunStor
         end_time: end_ms.map(ms_to_system_time),
         node_stats: Vec::new(),
         error: row.get(6),
+        test_results,
     })
 }
 
