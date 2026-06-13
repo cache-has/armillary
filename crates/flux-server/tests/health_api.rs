@@ -121,10 +121,15 @@ async fn overview_with_runs() {
         .finish_run(&run3.id, RunStatus::Success, now, None)
         .unwrap();
 
+    // The overview endpoint memoizes responses in a process-global cache keyed
+    // only by the window string. When this binary runs its overview tests in
+    // parallel, each must use a DISTINCT window or they alias each other's
+    // cached response. A 7d window still covers the runs created just above.
+    // (Windows in use: overview_empty=24h, this=7d, notable_events=30d.)
     let app = test_router(state);
     let resp = app
         .oneshot(
-            Request::get("/api/health/overview?window=24h")
+            Request::get("/api/health/overview?window=7d")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -184,10 +189,12 @@ async fn overview_notable_events_first_failure() {
         .finish_run(&run2.id, RunStatus::Failed, now, Some("disk full"))
         .unwrap();
 
+    // Distinct window from the other overview tests — see the note in
+    // `overview_with_runs` about the process-global, window-keyed cache.
     let app = test_router(state);
     let resp = app
         .oneshot(
-            Request::get("/api/health/overview")
+            Request::get("/api/health/overview?window=30d")
                 .body(Body::empty())
                 .unwrap(),
         )
