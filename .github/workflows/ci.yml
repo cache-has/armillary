@@ -37,9 +37,14 @@ jobs:
             libayatana-appindicator3-dev libxdo-dev
 
       # rust-embed requires the frontend/dist/ folder to exist at compile time.
-      # The frontend job validates the real build; here we just need the dir.
+      # The frontend job validates the real build; here we embed a minimal stub
+      # (index.html + one hashed asset) so the static_files embed tests can run.
       - name: Create frontend dist stub
-        run: mkdir -p frontend/dist
+        shell: bash
+        run: |
+          mkdir -p frontend/dist/assets
+          printf '<!doctype html><title>Horizon Flux</title>' > frontend/dist/index.html
+          printf '// stub asset' > frontend/dist/assets/index-stub.js
 
       - name: Check formatting
         run: cargo fmt --all --check
