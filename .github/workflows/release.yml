@@ -46,7 +46,7 @@ jobs:
             cargo_flags: "--features tray"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -146,7 +146,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Only the binary archives — `pattern` excludes the `.dockerbuild` build
       # record that docker/build-push-action uploads, which download-artifact
@@ -177,7 +177,7 @@ jobs:
     name: Docker
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Extract version from tag
         id: version
